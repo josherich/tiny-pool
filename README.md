@@ -12,7 +12,7 @@ A realistic 8-ball pool game built with Coding Agents
 
 ## Documentation
 
-[deepwiki](https://deepwiki.com/josherich/8-ball-pool)
+[deepwiki](https://deepwiki.com/josherich/tiny-pool)
 
 ## Prerequisites
 
@@ -149,6 +149,8 @@ MIT
 ## GitHub Pages Deployment
 
 This repo includes a GitHub Actions workflow that builds the app and publishes `dist/` to the `gh-pages` branch on every push to `master`/`main`.
+
+Live demo: https://josherich.github.io/tiny-pool/
 
 To enable GitHub Pages:
 1. Go to **Settings → Pages**

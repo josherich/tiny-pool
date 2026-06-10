@@ -15,6 +15,6 @@ export default defineConfig({
       },
     }),
   ],
-  base: '/8-ball-pool/',
+  base: '/tiny-pool/',
 })
 
