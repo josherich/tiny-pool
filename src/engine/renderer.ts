@@ -1,4 +1,14 @@
-import { physicsConfig, SCALE, type Ball, type Pocket, type Pocketed, type PocketedEvent } from '../pool_physics';
+import {
+  physicsConfig,
+  SCALE,
+  getTableGeometry,
+  getPlacementBounds,
+  type Ball,
+  type Pocket,
+  type Pocketed,
+  type PocketedEvent,
+  type TableGeometry
+} from '../pool_physics';
 import { isValidBallPlacement } from '../pool_rules';
 import { renderBall3D, renderDisplayBall, BALL_COLORS } from './ball_renderer';
 import { TABLE_THEMES, type ThemeColors, type TableTheme } from '../settings';
@@ -82,10 +92,12 @@ export class PoolRenderer {
   private ctx: CanvasRenderingContext2D;
   private theme: ThemeColors = TABLE_THEMES['green'];
   private aimLineLength = 300;
+  private geometry: TableGeometry;
 
   constructor(canvas: HTMLCanvasElement) {
     this.canvas = canvas;
     this.ctx = canvas.getContext('2d')!;
+    this.geometry = getTableGeometry(canvas.width, canvas.height);
   }
 
   setTheme(tableTheme: TableTheme) {
@@ -108,8 +120,9 @@ export class PoolRenderer {
     ctx.fillStyle = this.theme.felt;
     ctx.fillRect(40, 40, w - 80, h - 80);
 
-    this.renderCushionShadows(ctx, w, h);
-    this.renderTableMarkings(ctx, w, h);
+    this.renderPocketThroats(ctx);
+    this.renderCushionShadows(ctx);
+    this.renderCushionEdges(ctx);
     this.renderPockets(ctx, state.pockets);
     this.renderBallShadows(ctx, state.balls, radius, state.ballInHand);
     this.renderBalls(ctx, state.balls, radius, state.ballInHand);
@@ -121,38 +134,57 @@ export class PoolRenderer {
     this.renderCueSpinControl(ctx, state);
   }
 
-  private renderCushionShadows(ctx: CanvasRenderingContext2D, w: number, h: number) {
-    const ci = 40, cii = 60, sd = 10, ssd = 3;
-    ctx.save();
-    ctx.beginPath();
-    ctx.rect(ci, ci, w - ci * 2, h - ci * 2);
-    ctx.clip();
-
-    const topS = ctx.createLinearGradient(0, cii, 0, cii + sd);
-    topS.addColorStop(0, 'rgba(0, 0, 0, 0.32)');
-    topS.addColorStop(1, 'rgba(0, 0, 0, 0)');
-    ctx.fillStyle = topS;
-    ctx.fillRect(cii, cii, w - cii * 2, sd);
-
-    const sideS = ctx.createLinearGradient(0, cii, 0, cii + sd * 16);
-    sideS.addColorStop(0, 'rgba(0, 0, 0, 0.32)');
-    sideS.addColorStop(1, 'rgba(0, 0, 0, 0)');
-    ctx.fillStyle = sideS;
-    ctx.fillRect(cii, cii, ssd, h - cii * 2);
-    ctx.fillRect(w - cii - ssd, cii, ssd, h - cii * 2);
-
-    const botS = ctx.createLinearGradient(0, h - cii - sd, 0, h - cii);
-    botS.addColorStop(0, 'rgba(0, 0, 0, 0)');
-    botS.addColorStop(1, 'rgba(0, 0, 0, 0.2)');
-    ctx.fillStyle = botS;
-    ctx.fillRect(cii, h - cii - sd, w - cii * 2, sd);
-    ctx.restore();
+  // Dark openings in the cushion band leading into each pocket. These match
+  // the physics cushion gaps exactly, so a ball is only ever drawn over a
+  // dark area when it is genuinely off the playfield.
+  private renderPocketThroats(ctx: CanvasRenderingContext2D) {
+    ctx.fillStyle = this.theme.pocketBg;
+    for (const poly of this.geometry.pocketThroats) {
+      ctx.beginPath();
+      poly.forEach((p, i) => (i === 0 ? ctx.moveTo(p.x, p.y) : ctx.lineTo(p.x, p.y)));
+      ctx.closePath();
+      ctx.fill();
+    }
   }
 
-  private renderTableMarkings(ctx: CanvasRenderingContext2D, w: number, h: number) {
+  // Soft shadow the raised cushion nose casts onto the felt
+  private renderCushionShadows(ctx: CanvasRenderingContext2D) {
+    const depth = 10;
+    for (const c of this.geometry.cushions) {
+      const [, , noseEnd, noseStart] = c.points;
+      const { inward } = c;
+      const alpha = inward.y === 1 ? 0.32 : inward.y === -1 ? 0.2 : 0.26;
+      const g = ctx.createLinearGradient(
+        noseStart.x, noseStart.y,
+        noseStart.x + inward.x * depth, noseStart.y + inward.y * depth
+      );
+      g.addColorStop(0, `rgba(0, 0, 0, ${alpha})`);
+      g.addColorStop(1, 'rgba(0, 0, 0, 0)');
+      ctx.fillStyle = g;
+      ctx.beginPath();
+      ctx.moveTo(noseStart.x, noseStart.y);
+      ctx.lineTo(noseEnd.x, noseEnd.y);
+      ctx.lineTo(noseEnd.x + inward.x * depth, noseEnd.y + inward.y * depth);
+      ctx.lineTo(noseStart.x + inward.x * depth, noseStart.y + inward.y * depth);
+      ctx.closePath();
+      ctx.fill();
+    }
+  }
+
+  // Outline of each cushion's play-facing surface (jaw, nose, jaw) — the
+  // exact boundary balls bounce off in the physics simulation
+  private renderCushionEdges(ctx: CanvasRenderingContext2D) {
     ctx.strokeStyle = this.theme.feltBorder;
     ctx.lineWidth = 2;
-    ctx.strokeRect(60, 60, w - 120, h - 120);
+    for (const c of this.geometry.cushions) {
+      const [outerStart, outerEnd, noseEnd, noseStart] = c.points;
+      ctx.beginPath();
+      ctx.moveTo(outerEnd.x, outerEnd.y);
+      ctx.lineTo(noseEnd.x, noseEnd.y);
+      ctx.lineTo(noseStart.x, noseStart.y);
+      ctx.lineTo(outerStart.x, outerStart.y);
+      ctx.stroke();
+    }
   }
 
   private renderPockets(ctx: CanvasRenderingContext2D, pockets: Pocket[]) {
@@ -243,11 +275,7 @@ export class PoolRenderer {
     if (canPlace) {
       const gx = state.mousePos.x, gy = state.mousePos.y;
       const physX = gx / SCALE, physZ = gy / SCALE;
-      const br = 12 / SCALE, ci = 40 / SCALE;
-      const bounds = {
-        tableLeft: ci + br, tableRight: w / SCALE - ci - br,
-        tableTop: ci + br, tableBottom: h / SCALE - ci - br, ballRadius: br
-      };
+      const bounds = getPlacementBounds(w, h);
       const ballPositions = state.balls.filter(b => b.type !== 'cue').map(b => {
         const pos = b.body.translation(); return { x: pos.x, z: pos.z };
       });

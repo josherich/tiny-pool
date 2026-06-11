@@ -48,6 +48,171 @@ export const MAX_SHOT_POWER = PHYSICS_DEFAULTS.MAX_SHOT_POWER;
 // Canvas to physics scale (pixels per physics unit)
 export const SCALE = 5;
 
+// Table geometry shared by physics and rendering (all values in pixels).
+// The cushion band spans from CUSHION_INSET (rail line) to
+// CUSHION_INSET + CUSHION_WIDTH (the cushion nose, i.e. the play-area edge).
+export const TABLE = {
+  CUSHION_INSET: 40,
+  CUSHION_WIDTH: 20,
+  BALL_RADIUS: 12,
+  CORNER_POCKET_RADIUS: 25,
+  SIDE_POCKET_RADIUS: 22,
+  SIDE_POCKET_OFFSET: 5, // side pocket center sits this far behind the rail line
+} as const;
+
+export type Point2 = { x: number; y: number };
+
+export type CushionShape = {
+  // 4 corners in pixel coords, ordered: outerStart, outerEnd, noseEnd, noseStart.
+  // outerStart->outerEnd runs along the rail line; the nose edge faces the
+  // play area and the two connecting edges are the angled pocket jaws.
+  points: Point2[];
+  // Unit vector pointing from the cushion into the play area
+  inward: Point2;
+};
+
+export type TableGeometry = {
+  pockets: Pocket[];
+  cushions: CushionShape[];
+  // Dark throat regions (gaps in the cushion band leading into each pocket),
+  // in the same order as `pockets`
+  pocketThroats: Point2[][];
+};
+
+/**
+ * Single source of truth for the table layout. Both the physics colliders
+ * and the renderer derive their shapes from this so that what the player
+ * sees is exactly what the simulation collides with.
+ */
+export const getTableGeometry = (w: number, h: number): TableGeometry => {
+  const inset = TABLE.CUSHION_INSET;
+  const nose = inset + TABLE.CUSHION_WIDTH;
+  const cornerR = TABLE.CORNER_POCKET_RADIUS;
+  const sideR = TABLE.SIDE_POCKET_RADIUS;
+  const sideOff = TABLE.SIDE_POCKET_OFFSET;
+
+  const pockets: Pocket[] = [
+    { x: inset, y: inset, radius: cornerR },               // Top-left
+    { x: w / 2, y: inset - sideOff, radius: sideR },       // Top-middle
+    { x: w - inset, y: inset, radius: cornerR },           // Top-right
+    { x: inset, y: h - inset, radius: cornerR },           // Bottom-left
+    { x: w / 2, y: h - inset + sideOff, radius: sideR },   // Bottom-middle
+    { x: w - inset, y: h - inset, radius: cornerR }        // Bottom-right
+  ];
+
+  // Cushions end at the rail line where the corner pocket hole begins,
+  // with a 45° jaw running back to the nose line.
+  const cornerMouth = inset + cornerR;
+  const cornerJaw = cornerMouth + TABLE.CUSHION_WIDTH;
+  // Half-width of the side pocket mouth where its hole crosses the rail line,
+  // also with a 45° jaw.
+  const sideMouth = Math.sqrt(sideR * sideR - sideOff * sideOff);
+  const sideJaw = sideMouth + TABLE.CUSHION_WIDTH;
+
+  const cushions: CushionShape[] = [
+    { // Top-left segment
+      points: [
+        { x: cornerMouth, y: inset },
+        { x: w / 2 - sideMouth, y: inset },
+        { x: w / 2 - sideJaw, y: nose },
+        { x: cornerJaw, y: nose }
+      ],
+      inward: { x: 0, y: 1 }
+    },
+    { // Top-right segment
+      points: [
+        { x: w / 2 + sideMouth, y: inset },
+        { x: w - cornerMouth, y: inset },
+        { x: w - cornerJaw, y: nose },
+        { x: w / 2 + sideJaw, y: nose }
+      ],
+      inward: { x: 0, y: 1 }
+    },
+    { // Bottom-left segment
+      points: [
+        { x: cornerMouth, y: h - inset },
+        { x: w / 2 - sideMouth, y: h - inset },
+        { x: w / 2 - sideJaw, y: h - nose },
+        { x: cornerJaw, y: h - nose }
+      ],
+      inward: { x: 0, y: -1 }
+    },
+    { // Bottom-right segment
+      points: [
+        { x: w / 2 + sideMouth, y: h - inset },
+        { x: w - cornerMouth, y: h - inset },
+        { x: w - cornerJaw, y: h - nose },
+        { x: w / 2 + sideJaw, y: h - nose }
+      ],
+      inward: { x: 0, y: -1 }
+    },
+    { // Left cushion
+      points: [
+        { x: inset, y: cornerMouth },
+        { x: inset, y: h - cornerMouth },
+        { x: nose, y: h - cornerJaw },
+        { x: nose, y: cornerJaw }
+      ],
+      inward: { x: 1, y: 0 }
+    },
+    { // Right cushion
+      points: [
+        { x: w - inset, y: cornerMouth },
+        { x: w - inset, y: h - cornerMouth },
+        { x: w - nose, y: h - cornerJaw },
+        { x: w - nose, y: cornerJaw }
+      ],
+      inward: { x: -1, y: 0 }
+    }
+  ];
+
+  // Throat region of a corner pocket: the part of the cushion band between
+  // the two adjacent jaws. (px, py) is the pocket center at the rail corner,
+  // (sx, sy) mirror the shape toward the table interior.
+  const cornerThroat = (px: number, py: number, sx: number, sy: number): Point2[] => [
+    { x: px, y: py },
+    { x: px + sx * cornerR, y: py },
+    { x: px + sx * (cornerR + TABLE.CUSHION_WIDTH), y: py + sy * TABLE.CUSHION_WIDTH },
+    { x: px + sx * TABLE.CUSHION_WIDTH, y: py + sy * TABLE.CUSHION_WIDTH },
+    { x: px + sx * TABLE.CUSHION_WIDTH, y: py + sy * (cornerR + TABLE.CUSHION_WIDTH) },
+    { x: px, y: py + sy * cornerR }
+  ];
+
+  const sideThroat = (cx: number, railY: number, noseY: number): Point2[] => [
+    { x: cx - sideMouth, y: railY },
+    { x: cx + sideMouth, y: railY },
+    { x: cx + sideJaw, y: noseY },
+    { x: cx - sideJaw, y: noseY }
+  ];
+
+  const pocketThroats: Point2[][] = [
+    cornerThroat(inset, inset, 1, 1),
+    sideThroat(w / 2, inset, nose),
+    cornerThroat(w - inset, inset, -1, 1),
+    cornerThroat(inset, h - inset, 1, -1),
+    sideThroat(w / 2, h - inset, h - nose),
+    cornerThroat(w - inset, h - inset, -1, -1)
+  ];
+
+  return { pockets, cushions, pocketThroats };
+};
+
+/**
+ * Legal cue-ball placement bounds (physics units): the ball must sit fully
+ * inside the play area, i.e. its edge cannot overlap the cushion nose.
+ */
+export const getPlacementBounds = (w: number, h: number) => {
+  const nose = (TABLE.CUSHION_INSET + TABLE.CUSHION_WIDTH) / SCALE;
+  const ballRadius = TABLE.BALL_RADIUS / SCALE;
+  return {
+    tableLeft: nose + ballRadius,
+    tableRight: w / SCALE - nose - ballRadius,
+    tableTop: nose + ballRadius,
+    tableBottom: h / SCALE - nose - ballRadius,
+    ballRadius
+  };
+};
+
 // Fixed timestep for deterministic physics (240 Hz)
 // Higher rate improves ball-ball collision accuracy: at lower rates the cue ball
 // overshoots the theoretical first-contact point during discrete integration,
@@ -68,156 +233,40 @@ export const setupTable = ({
 }) => {
   const w = canvas.width;
   const h = canvas.height;
-  const cushionInset = 40; // Distance from edge to visual cushion (pixels)
-  const ballRadius = 12;   // Ball radius in pixels
-  const cushionThickness = 15; // Cushion thickness in pixels
-  const pocketRadius = 25; // Corner pocket radius in pixels
-  const sidePocketRadius = 22; // Side pocket radius in pixels
-  const cornerPocketGap = 45; // Gap in cushion for corner pockets (pixels)
-  const sidePocketGap = 40;   // Gap for side pockets (pixels)
-
-  // Pocket positions (in pixels for rendering)
-  const pockets: Pocket[] = [
-    { x: cushionInset, y: cushionInset, radius: pocketRadius },                    // Top-left
-    { x: w / 2, y: cushionInset - 5, radius: sidePocketRadius },                   // Top-middle
-    { x: w - cushionInset, y: cushionInset, radius: pocketRadius },                // Top-right
-    { x: cushionInset, y: h - cushionInset, radius: pocketRadius },                // Bottom-left
-    { x: w / 2, y: h - cushionInset + 5, radius: sidePocketRadius },               // Bottom-middle
-    { x: w - cushionInset, y: h - cushionInset, radius: pocketRadius }             // Bottom-right
-  ];
+  const geometry = getTableGeometry(w, h);
 
   // Create cushion walls using Rapier 3D
   // In our 3D setup: X = left-right, Y = up (height), Z = top-bottom (depth into screen)
-  // We'll simulate a top-down view, so balls roll on the X-Z plane at Y=BALL_RADIUS
-
-  // Physics coordinates: Convert from pixels
-  // Left edge at x=0, right edge at x=w/SCALE
-  // Top edge at z=0, bottom edge at z=h/SCALE
-  const physW = w / SCALE;
-  const physH = h / SCALE;
-  const physCushionInset = cushionInset / SCALE;
-  const physCushionThickness = cushionThickness / SCALE;
-  const physCornerGap = cornerPocketGap / SCALE;
-  const physSideGap = sidePocketGap / SCALE;
-  const physBallRadius = ballRadius / SCALE;
+  // We simulate a top-down view, so balls roll on the X-Z plane at Y=BALL_RADIUS.
+  //
+  // Each cushion is a convex prism extruded from the exact polygon the
+  // renderer draws (rail edge, nose edge and the two angled pocket jaws),
+  // so collisions happen precisely at the visible cushion surface.
+  const physBallRadius = TABLE.BALL_RADIUS / SCALE;
   const cushionHeight = physBallRadius * 2.5; // Cushions are taller than balls
 
   const cushionBodies: RAPIER.RigidBody[] = [];
 
-  // Helper to create a cushion cuboid
-  const createCushion = (x: number, y: number, z: number, hx: number, hy: number, hz: number) => {
-    const bodyDesc = rapier.RigidBodyDesc.fixed().setTranslation(x, y, z);
-    const body = world.createRigidBody(bodyDesc);
-    const colliderDesc = rapier.ColliderDesc.cuboid(hx, hy, hz)
+  for (const cushion of geometry.cushions) {
+    const points: number[] = [];
+    for (const p of cushion.points) {
+      points.push(p.x / SCALE, 0, p.y / SCALE);
+      points.push(p.x / SCALE, cushionHeight, p.y / SCALE);
+    }
+
+    const colliderDesc = rapier.ColliderDesc.convexHull(new Float32Array(points));
+    if (!colliderDesc) continue;
+
+    const body = world.createRigidBody(rapier.RigidBodyDesc.fixed());
+    colliderDesc
       .setRestitution(physicsConfig.CUSHION_RESTITUTION)
       .setFriction(physicsConfig.CUSHION_FRICTION)
       .setActiveEvents(rapier.ActiveEvents.COLLISION_EVENTS);
     world.createCollider(colliderDesc, body);
     cushionBodies.push(body);
-  };
-
-  // Cushion Y position (bottom of cushion at table level)
-  const cushionY = cushionHeight / 2;
-
-  // Top cushions (along Z = physCushionInset, extending in X direction)
-  // Left segment of top cushion (from left corner pocket to center pocket)
-  // Offset by ball radius so the edge of the ball collides with the visual cushion edge
-  const topZ = physCushionInset + physBallRadius;
-  const topLeftStart = physCushionInset + physCornerGap;
-  const topLeftEnd = physW / 2 - physSideGap;
-  const topLeftLength = topLeftEnd - topLeftStart;
-  if (topLeftLength > 0) {
-    createCushion(
-      topLeftStart + topLeftLength / 2,
-      cushionY,
-      topZ,
-      topLeftLength / 2,
-      cushionHeight / 2,
-      physCushionThickness / 2
-    );
   }
 
-  // Right segment of top cushion
-  const topRightStart = physW / 2 + physSideGap;
-  const topRightEnd = physW - physCushionInset - physCornerGap;
-  const topRightLength = topRightEnd - topRightStart;
-  if (topRightLength > 0) {
-    createCushion(
-      topRightStart + topRightLength / 2,
-      cushionY,
-      topZ,
-      topRightLength / 2,
-      cushionHeight / 2,
-      physCushionThickness / 2
-    );
-  }
-
-  // Bottom cushions (along Z = physH - physCushionInset)
-  // Offset by ball radius so the edge of the ball collides with the visual cushion edge
-  const bottomZ = physH - physCushionInset - physBallRadius;
-  const bottomLeftStart = physCushionInset + physCornerGap;
-  const bottomLeftEnd = physW / 2 - physSideGap;
-  const bottomLeftLength = bottomLeftEnd - bottomLeftStart;
-  if (bottomLeftLength > 0) {
-    createCushion(
-      bottomLeftStart + bottomLeftLength / 2,
-      cushionY,
-      bottomZ,
-      bottomLeftLength / 2,
-      cushionHeight / 2,
-      physCushionThickness / 2
-    );
-  }
-
-  const bottomRightStart = physW / 2 + physSideGap;
-  const bottomRightEnd = physW - physCushionInset - physCornerGap;
-  const bottomRightLength = bottomRightEnd - bottomRightStart;
-  if (bottomRightLength > 0) {
-    createCushion(
-      bottomRightStart + bottomRightLength / 2,
-      cushionY,
-      bottomZ,
-      bottomRightLength / 2,
-      cushionHeight / 2,
-      physCushionThickness / 2
-    );
-  }
-
-  // Left cushion (along X = physCushionInset, extending in Z direction)
-  // Offset by ball radius so the edge of the ball collides with the visual cushion edge
-  const leftX = physCushionInset + physBallRadius;
-  const leftStart = physCushionInset + physCornerGap;
-  const leftEnd = physH - physCushionInset - physCornerGap;
-  const leftLength = leftEnd - leftStart;
-  if (leftLength > 0) {
-    createCushion(
-      leftX,
-      cushionY,
-      leftStart + leftLength / 2,
-      physCushionThickness / 2,
-      cushionHeight / 2,
-      leftLength / 2
-    );
-  }
-
-  // Right cushion
-  // Offset by ball radius so the edge of the ball collides with the visual cushion edge
-  const rightX = physW - physCushionInset - physBallRadius;
-  const rightStart = physCushionInset + physCornerGap;
-  const rightEnd = physH - physCushionInset - physCornerGap;
-  const rightLength = rightEnd - rightStart;
-  if (rightLength > 0) {
-    createCushion(
-      rightX,
-      cushionY,
-      rightStart + rightLength / 2,
-      physCushionThickness / 2,
-      cushionHeight / 2,
-      rightLength / 2
-    );
-  }
-
-  return { pockets, cushionBodies };
+  return { pockets: geometry.pockets, cushionBodies };
 };
 
 export const setupBalls = ({
@@ -343,7 +392,7 @@ export const checkPockets = ({
     // Fallback: If ball is outside table bounds, consider it pocketed
     // This catches fast-moving balls that might skip past pocket detection
     const w = canvas.width;
-    const cushionInset = 40;
+    const cushionInset = TABLE.CUSHION_INSET;
     if (pixelX < cushionInset - pixelRadius || pixelX > w - cushionInset + pixelRadius ||
         pixelZ < cushionInset - pixelRadius || pixelZ > h - cushionInset + pixelRadius) {
       isInPocket = true;
