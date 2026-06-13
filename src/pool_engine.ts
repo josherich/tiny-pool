@@ -7,6 +7,7 @@ import {
   setupTable,
   setupBalls,
   checkPockets,
+  getPlacementBounds,
   applyRollingFriction,
   computeSubSteps,
   syncPhysicsConfig,
@@ -228,17 +229,7 @@ class PoolGameEngine {
   }
 
   private getTableBounds() {
-    const cushionInset = 40;
-    const ballRadius = 12;
-    const physBallRadius = ballRadius / SCALE;
-    const physCushionInset = cushionInset / SCALE;
-    return {
-      tableLeft: physCushionInset + physBallRadius,
-      tableRight: this.canvas.width / SCALE - physCushionInset - physBallRadius,
-      tableTop: physCushionInset + physBallRadius,
-      tableBottom: this.canvas.height / SCALE - physCushionInset - physBallRadius,
-      ballRadius: physBallRadius
-    };
+    return getPlacementBounds(this.canvas.width, this.canvas.height);
   }
 
   private placeBallInHand() {
