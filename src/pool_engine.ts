@@ -11,6 +11,7 @@ import {
   computeSubSteps,
   syncPhysicsConfig,
   clonePocketed,
+  getTableBounds,
   type Ball,
   type Pocket,
   type Pocketed,
@@ -196,7 +197,7 @@ class PoolGameEngine {
       case 'ball_in_hand_place': {
         const cueBall = this.balls.find(b => b.type === 'cue');
         if (cueBall) {
-          const physRadius = 12 / SCALE;
+          const physRadius = getTableBounds().ballRadius;
           cueBall.body.setTranslation({ x: message.position.x, y: physRadius, z: message.position.z }, true);
           cueBall.body.setLinvel({ x: 0, y: 0, z: 0 }, true);
           cueBall.body.setAngvel({ x: 0, y: 0, z: 0 }, true);
@@ -228,17 +229,7 @@ class PoolGameEngine {
   }
 
   private getTableBounds() {
-    const cushionInset = 40;
-    const ballRadius = 12;
-    const physBallRadius = ballRadius / SCALE;
-    const physCushionInset = cushionInset / SCALE;
-    return {
-      tableLeft: physCushionInset + physBallRadius,
-      tableRight: this.canvas.width / SCALE - physCushionInset - physBallRadius,
-      tableTop: physCushionInset + physBallRadius,
-      tableBottom: this.canvas.height / SCALE - physCushionInset - physBallRadius,
-      ballRadius: physBallRadius
-    };
+    return getTableBounds();
   }
 
   private placeBallInHand() {

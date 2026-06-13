@@ -1,4 +1,18 @@
-import { physicsConfig, SCALE, type Ball, type Pocket, type Pocketed, type PocketedEvent } from '../pool_physics';
+import {
+  physicsConfig,
+  SCALE,
+  BALL_RADIUS_PX,
+  SURFACE_ORIGIN_X,
+  SURFACE_ORIGIN_Z,
+  SURFACE_W,
+  SURFACE_L,
+  getTableGeometry,
+  getTableBounds,
+  type Ball,
+  type Pocket,
+  type Pocketed,
+  type PocketedEvent,
+} from '../pool_physics';
 import { isValidBallPlacement } from '../pool_rules';
 import { renderBall3D, renderDisplayBall, BALL_COLORS } from './ball_renderer';
 import { TABLE_THEMES, type ThemeColors, type TableTheme } from '../settings';
@@ -77,6 +91,12 @@ function findTargetBall(
   return null;
 }
 
+// Pixel coordinates of the playing surface
+const feltLeft = SURFACE_ORIGIN_X * SCALE;
+const feltTop = SURFACE_ORIGIN_Z * SCALE;
+const feltW = SURFACE_W * SCALE;
+const feltL = SURFACE_L * SCALE;
+
 export class PoolRenderer {
   private canvas: HTMLCanvasElement;
   private ctx: CanvasRenderingContext2D;
@@ -100,13 +120,16 @@ export class PoolRenderer {
     const ctx = this.ctx;
     const w = this.canvas.width;
     const h = this.canvas.height;
-    const radius = 12;
+    const radius = BALL_RADIUS_PX;
     const now = performance.now();
 
+    // Background (outer rail wood)
     ctx.fillStyle = this.theme.background;
     ctx.fillRect(0, 0, w, h);
+
+    // Felt (playing surface)
     ctx.fillStyle = this.theme.felt;
-    ctx.fillRect(40, 40, w - 80, h - 80);
+    ctx.fillRect(feltLeft, feltTop, feltW, feltL);
 
     this.renderCushionShadows(ctx, w, h);
     this.renderTableMarkings(ctx, w, h);
@@ -121,41 +144,67 @@ export class PoolRenderer {
     this.renderCueSpinControl(ctx, state);
   }
 
-  private renderCushionShadows(ctx: CanvasRenderingContext2D, w: number, h: number) {
-    const ci = 40, cii = 60, sd = 10, ssd = 3;
+  private renderCushionShadows(ctx: CanvasRenderingContext2D, _w: number, _h: number) {
+    const sd = 10, ssd = 3;
     ctx.save();
     ctx.beginPath();
-    ctx.rect(ci, ci, w - ci * 2, h - ci * 2);
+    ctx.rect(feltLeft, feltTop, feltW, feltL);
     ctx.clip();
 
-    const topS = ctx.createLinearGradient(0, cii, 0, cii + sd);
+    // Top shadow
+    const topS = ctx.createLinearGradient(0, feltTop, 0, feltTop + sd);
     topS.addColorStop(0, 'rgba(0, 0, 0, 0.32)');
     topS.addColorStop(1, 'rgba(0, 0, 0, 0)');
     ctx.fillStyle = topS;
-    ctx.fillRect(cii, cii, w - cii * 2, sd);
+    ctx.fillRect(feltLeft, feltTop, feltW, sd);
 
-    const sideS = ctx.createLinearGradient(0, cii, 0, cii + sd * 16);
-    sideS.addColorStop(0, 'rgba(0, 0, 0, 0.32)');
-    sideS.addColorStop(1, 'rgba(0, 0, 0, 0)');
-    ctx.fillStyle = sideS;
-    ctx.fillRect(cii, cii, ssd, h - cii * 2);
-    ctx.fillRect(w - cii - ssd, cii, ssd, h - cii * 2);
+    // Side shadows
+    const leftS = ctx.createLinearGradient(feltLeft, 0, feltLeft + sd, 0);
+    leftS.addColorStop(0, 'rgba(0, 0, 0, 0.32)');
+    leftS.addColorStop(1, 'rgba(0, 0, 0, 0)');
+    ctx.fillStyle = leftS;
+    ctx.fillRect(feltLeft, feltTop, ssd, feltL);
 
-    const botS = ctx.createLinearGradient(0, h - cii - sd, 0, h - cii);
+    const rightS = ctx.createLinearGradient(feltLeft + feltW, 0, feltLeft + feltW - sd, 0);
+    rightS.addColorStop(0, 'rgba(0, 0, 0, 0.32)');
+    rightS.addColorStop(1, 'rgba(0, 0, 0, 0)');
+    ctx.fillStyle = rightS;
+    ctx.fillRect(feltLeft + feltW - ssd, feltTop, ssd, feltL);
+
+    // Bottom shadow
+    const botS = ctx.createLinearGradient(0, feltTop + feltL - sd, 0, feltTop + feltL);
     botS.addColorStop(0, 'rgba(0, 0, 0, 0)');
     botS.addColorStop(1, 'rgba(0, 0, 0, 0.2)');
     ctx.fillStyle = botS;
-    ctx.fillRect(cii, h - cii - sd, w - cii * 2, sd);
+    ctx.fillRect(feltLeft, feltTop + feltL - sd, feltW, sd);
     ctx.restore();
   }
 
-  private renderTableMarkings(ctx: CanvasRenderingContext2D, w: number, h: number) {
+  private renderTableMarkings(ctx: CanvasRenderingContext2D, _w: number, _h: number) {
+    // Draw cushion nose segments as lines on the felt boundary
+    const geo = getTableGeometry();
     ctx.strokeStyle = this.theme.feltBorder;
     ctx.lineWidth = 2;
-    ctx.strokeRect(60, 60, w - 120, h - 120);
+
+    // Draw each cushion segment as a line
+    for (const seg of geo.linearSegments) {
+      ctx.beginPath();
+      ctx.moveTo(seg.x1 * SCALE, seg.z1 * SCALE);
+      ctx.lineTo(seg.x2 * SCALE, seg.z2 * SCALE);
+      ctx.stroke();
+    }
+
+    // Draw circular jaw tips
+    for (const tip of geo.circularTips) {
+      ctx.beginPath();
+      ctx.arc(tip.x * SCALE, tip.z * SCALE, tip.radius * SCALE, 0, Math.PI * 2);
+      ctx.stroke();
+    }
   }
 
   private renderPockets(ctx: CanvasRenderingContext2D, pockets: Pocket[]) {
+    // Arc ranges for pocket rim highlights (based on pocket position)
+    // Order: bottom-left, bottom-side, bottom-right, top-left, top-side, top-right
     const arcRanges: [number, number][] = [
       [0.75, 1.75], [1.1, 1.9], [1.25, 2.25],
       [0.25, 1.25], [0.1, 0.9], [-0.25, 0.75]
@@ -243,11 +292,7 @@ export class PoolRenderer {
     if (canPlace) {
       const gx = state.mousePos.x, gy = state.mousePos.y;
       const physX = gx / SCALE, physZ = gy / SCALE;
-      const br = 12 / SCALE, ci = 40 / SCALE;
-      const bounds = {
-        tableLeft: ci + br, tableRight: w / SCALE - ci - br,
-        tableTop: ci + br, tableBottom: h / SCALE - ci - br, ballRadius: br
-      };
+      const bounds = getTableBounds();
       const ballPositions = state.balls.filter(b => b.type !== 'cue').map(b => {
         const pos = b.body.translation(); return { x: pos.x, z: pos.z };
       });

@@ -2,16 +2,15 @@ import { describe, it, expect, beforeAll } from 'vitest';
 import RAPIER from '@dimforge/rapier3d-compat';
 import {
   createWorld,
-  SCALE,
   FIXED_DT,
   physicsConfig,
   computeSubSteps,
   applyRollingFriction,
+  PHYS_BALL_RADIUS,
   type Ball
 } from './pool_physics';
 
-const BALL_RADIUS_PX = 12;
-const BALL_RADIUS_PHYS = BALL_RADIUS_PX / SCALE;
+const BALL_RADIUS_PHYS = PHYS_BALL_RADIUS;
 
 /** Create a single ball in the given world. */
 function createBall(

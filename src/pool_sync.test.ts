@@ -9,7 +9,7 @@ import {
   type ShotInput,
   type GameMessage
 } from './pool_sync';
-import { createWorld, setupTable, setupBalls, FIXED_DT } from './pool_physics';
+import { createWorld, setupTable, setupBalls, FIXED_DT, getTableBounds } from './pool_physics';
 import { evaluateTurnSwitch, evaluateGameOver, isValidBallPlacement } from './pool_rules';
 
 const CANVAS_WIDTH = 1200;
@@ -496,14 +496,8 @@ describe('Message Protocol', () => {
 // --- Ball in Hand Placement Validation Tests ---
 
 describe('Ball in Hand Placement', () => {
-  // Table bounds in physics units (derived from 1200x700 canvas, cushionInset=40, ballRadius=12, SCALE=5)
-  const tableBounds = {
-    tableLeft: (40 + 12) / 5,    // 10.4
-    tableRight: (1200 - 40 - 12) / 5,  // 229.6
-    tableTop: (40 + 12) / 5,     // 10.4
-    tableBottom: (700 - 40 - 12) / 5,   // 129.6
-    ballRadius: 12 / 5            // 2.4
-  };
+  // Table bounds from the computed table geometry
+  const tableBounds = getTableBounds();
 
   it('should accept valid placement with no nearby balls', () => {
     const result = isValidBallPlacement({
@@ -573,7 +567,7 @@ describe('Ball in Hand Placement', () => {
       physX: 60,
       physZ: 70,
       ballPositions: [
-        { x: 62, z: 70 }  // only 2 units away, less than 2 * 2.4 * 1.05 = 5.04
+        { x: 62, z: 70 }  // only 2 units away, less than 2 * ballRadius * 1.05
       ],
       ...tableBounds
     });
@@ -581,13 +575,13 @@ describe('Ball in Hand Placement', () => {
   });
 
   it('should accept placement just outside overlap range', () => {
-    // ballRadius * 2.1 = 2.4 * 2.1 = 5.04
-    // Place ball at distance 6 from another ball (> 5.04)
+    // ballRadius * 2.1 ≈ 6.24 (with pooltool-derived ball radius)
+    // Place ball at distance 8 from another ball (> 6.24)
     const result = isValidBallPlacement({
-      physX: 66,
+      physX: 68,
       physZ: 70,
       ballPositions: [
-        { x: 60, z: 70 }  // 6 units away, greater than 5.04
+        { x: 60, z: 70 }  // 8 units away, greater than 2 * ballRadius * 1.05
       ],
       ...tableBounds
     });

@@ -5,8 +5,8 @@ import {
   type Pocketed,
   type PocketedThisShot,
   type PocketedEvent,
-  SCALE,
   FIXED_DT,
+  PHYS_BALL_RADIUS,
   physicsConfig,
   checkPockets,
   applyRollingFriction,
@@ -115,7 +115,7 @@ export function restoreBallStates(
   }
 
   const newBalls: Ball[] = [];
-  const physRadius = 12 / SCALE;
+  const physRadius = PHYS_BALL_RADIUS;
 
   for (const bs of snapshot.balls) {
     const bodyDesc = RAPIER.RigidBodyDesc.dynamic()
