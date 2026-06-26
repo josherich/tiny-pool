@@ -124,6 +124,7 @@ export class PoolRenderer {
     this.renderCushionShadows(ctx);
     this.renderCushionEdges(ctx);
     this.renderPockets(ctx, state.pockets);
+    this.renderPocketFeltBleed(ctx, state.pockets);
     this.renderBallShadows(ctx, state.balls, radius, state.ballInHand);
     this.renderBalls(ctx, state.balls, radius, state.ballInHand);
     this.renderPocketingAnimations(ctx, state.pocketingAnimations, radius, now);
@@ -134,17 +135,17 @@ export class PoolRenderer {
     this.renderCueSpinControl(ctx, state);
   }
 
-  // Dark openings in the cushion band leading into each pocket. These match
-  // the physics cushion gaps exactly, so a ball is only ever drawn over a
-  // dark area when it is genuinely off the playfield.
+  // Cushion-band openings leading into each pocket. Gradient fill lets table felt
+  // bleed into the throat instead of a hard dark cutout at the pocket mouth.
   private renderPocketThroats(ctx: CanvasRenderingContext2D) {
-    ctx.fillStyle = this.theme.pocketBg;
-    for (const poly of this.geometry.pocketThroats) {
+    this.geometry.pocketThroats.forEach((poly, i) => {
+      const pocket = this.geometry.pockets[i];
+      ctx.fillStyle = this.createPocketMouthGradient(ctx, pocket.x, pocket.y, pocket.radius);
       ctx.beginPath();
-      poly.forEach((p, i) => (i === 0 ? ctx.moveTo(p.x, p.y) : ctx.lineTo(p.x, p.y)));
+      poly.forEach((p, j) => (j === 0 ? ctx.moveTo(p.x, p.y) : ctx.lineTo(p.x, p.y)));
       ctx.closePath();
       ctx.fill();
-    }
+    });
   }
 
   // Soft shadow the raised cushion nose casts onto the felt
@@ -187,6 +188,30 @@ export class PoolRenderer {
     }
   }
 
+  private hslWithAlpha(hslColor: string, alpha: number): string {
+    const match = hslColor.match(/hsl\(\s*([\d.]+)\s*,\s*([\d.]+)%\s*,\s*([\d.]+)%\s*\)/);
+    if (!match) return hslColor;
+    return `hsla(${match[1]}, ${match[2]}%, ${match[3]}%, ${alpha})`;
+  }
+
+  private createPocketMouthGradient(
+    ctx: CanvasRenderingContext2D,
+    x: number,
+    y: number,
+    radius: number
+  ): CanvasGradient {
+    const outerR = radius + 12;
+    const g = ctx.createRadialGradient(x, y, 0, x, y, outerR);
+    g.addColorStop(0, 'hsl(0, 0%, 0%)');
+    g.addColorStop(0.22, 'hsl(0, 0%, 4%)');
+    g.addColorStop(0.4, this.theme.pocketBg);
+    g.addColorStop(0.58, this.theme.pocketShadow);
+    g.addColorStop(0.74, this.theme.feltBorder);
+    g.addColorStop(0.9, this.theme.felt);
+    g.addColorStop(1, this.theme.felt);
+    return g;
+  }
+
   private renderPockets(ctx: CanvasRenderingContext2D, pockets: Pocket[]) {
     const arcRanges: [number, number][] = [
       [0.75, 1.75], [1.1, 1.9], [1.25, 2.25],
@@ -194,28 +219,36 @@ export class PoolRenderer {
     ];
 
     pockets.forEach((p, i) => {
-      ctx.fillStyle = this.theme.pocketShadow;
-      ctx.beginPath(); ctx.arc(p.x, p.y, p.radius + 6, 0, Math.PI * 2); ctx.fill();
+      const outerR = p.radius + 12;
 
-      ctx.fillStyle = this.theme.pocketBg;
-      ctx.beginPath(); ctx.arc(p.x, p.y, p.radius + 2, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = this.createPocketMouthGradient(ctx, p.x, p.y, p.radius);
+      ctx.beginPath(); ctx.arc(p.x, p.y, outerR, 0, Math.PI * 2); ctx.fill();
 
-      const g = ctx.createRadialGradient(p.x, p.y, 0, p.x, p.y, p.radius);
-      g.addColorStop(0, 'hsl(0, 0%, 2%)'); g.addColorStop(0.7, 'hsl(0, 0%, 5%)'); g.addColorStop(1, 'hsl(0, 0%, 10%)');
-      ctx.fillStyle = g;
-      ctx.beginPath(); ctx.arc(p.x, p.y, p.radius, 0, Math.PI * 2); ctx.fill();
-
-      ctx.fillStyle = 'hsl(0, 0%, 0%)';
-      ctx.beginPath(); ctx.arc(p.x, p.y, p.radius * 0.7, 0, Math.PI * 2); ctx.fill();
-
-      ctx.strokeStyle = 'hsl(25, 25%, 20%)'; ctx.lineWidth = 3;
+      ctx.strokeStyle = this.hslWithAlpha(this.theme.feltBorder, 0.35); ctx.lineWidth = 2;
       ctx.beginPath();
       ctx.arc(p.x, p.y, p.radius - 1, Math.PI * arcRanges[i][0], Math.PI * arcRanges[i][1]);
       ctx.stroke();
 
       ctx.strokeStyle = 'rgba(255, 255, 255, 0.05)'; ctx.lineWidth = 1;
-      ctx.beginPath(); ctx.arc(p.x - 2, p.y - 2, p.radius * 0.5, 0, Math.PI * 2); ctx.stroke();
+      ctx.beginPath(); ctx.arc(p.x - 2, p.y - 2, p.radius * 0.35, 0, Math.PI * 2); ctx.stroke();
     });
+  }
+
+  // Extra soft felt halo on the play surface so pocket mouths blend with the cloth.
+  private renderPocketFeltBleed(ctx: CanvasRenderingContext2D, pockets: Pocket[]) {
+    for (const p of pockets) {
+      const inner = p.radius + 2;
+      const outer = p.radius + 14;
+      const g = ctx.createRadialGradient(p.x, p.y, inner, p.x, p.y, outer);
+      g.addColorStop(0, 'rgba(0, 0, 0, 0)');
+      g.addColorStop(0.45, this.hslWithAlpha(this.theme.feltBorder, 0.35));
+      g.addColorStop(0.75, this.hslWithAlpha(this.theme.felt, 0.65));
+      g.addColorStop(1, this.theme.felt);
+      ctx.fillStyle = g;
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, outer, 0, Math.PI * 2);
+      ctx.fill();
+    }
   }
 
   private renderBallShadows(ctx: CanvasRenderingContext2D, balls: Ball[], radius: number, ballInHand: boolean) {

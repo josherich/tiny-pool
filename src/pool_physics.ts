@@ -55,7 +55,7 @@ export const TABLE = {
   CUSHION_INSET: 40,
   CUSHION_WIDTH: 20,
   BALL_RADIUS: 12,
-  CORNER_POCKET_RADIUS: 25,
+  CORNER_POCKET_RADIUS: 30,
   SIDE_POCKET_RADIUS: 22,
   SIDE_POCKET_OFFSET: 5, // side pocket center sits this far behind the rail line
 } as const;
