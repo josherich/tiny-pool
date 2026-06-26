@@ -133,6 +133,16 @@ describe('Table geometry consistency', () => {
       }
     }
   });
+
+  it('play area outline chamfers corners at pocket mouths', () => {
+    const geometry = getTableGeometry(CANVAS_WIDTH, CANVAS_HEIGHT);
+    const cornerJaw = TABLE.CUSHION_INSET + TABLE.CORNER_POCKET_RADIUS + TABLE.CUSHION_WIDTH;
+    const nose = TABLE.CUSHION_INSET + TABLE.CUSHION_WIDTH;
+
+    expect(geometry.playAreaOutline).toHaveLength(10);
+    expect(geometry.playAreaOutline[0]).toEqual({ x: cornerJaw, y: nose });
+    expect(geometry.playAreaOutline[9]).toEqual({ x: nose, y: cornerJaw });
+  });
 });
 
 describe('Cushion collision matches visuals', () => {

@@ -55,7 +55,7 @@ export const TABLE = {
   CUSHION_INSET: 40,
   CUSHION_WIDTH: 20,
   BALL_RADIUS: 12,
-  CORNER_POCKET_RADIUS: 25,
+  CORNER_POCKET_RADIUS: 27.5,
   SIDE_POCKET_RADIUS: 22,
   SIDE_POCKET_OFFSET: 5, // side pocket center sits this far behind the rail line
 } as const;
@@ -77,6 +77,8 @@ export type TableGeometry = {
   // Dark throat regions (gaps in the cushion band leading into each pocket),
   // in the same order as `pockets`
   pocketThroats: Point2[][];
+  // Play-surface outline (chamfered at corner pockets, notched at side pockets)
+  playAreaOutline: Point2[];
 };
 
 /**
@@ -194,7 +196,20 @@ export const getTableGeometry = (w: number, h: number): TableGeometry => {
     cornerThroat(w - inset, h - inset, -1, -1)
   ];
 
-  return { pockets, cushions, pocketThroats };
+  const playAreaOutline: Point2[] = [
+    { x: cornerJaw, y: nose },
+    { x: w / 2 - sideJaw, y: nose },
+    { x: w / 2 + sideJaw, y: nose },
+    { x: w - cornerJaw, y: nose },
+    { x: w - nose, y: cornerJaw },
+    { x: w - nose, y: h - cornerJaw },
+    { x: w - cornerJaw, y: h - nose },
+    { x: cornerJaw, y: h - nose },
+    { x: nose, y: h - cornerJaw },
+    { x: nose, y: cornerJaw }
+  ];
+
+  return { pockets, cushions, pocketThroats, playAreaOutline };
 };
 
 /**

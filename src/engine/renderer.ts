@@ -117,10 +117,9 @@ export class PoolRenderer {
 
     ctx.fillStyle = this.theme.background;
     ctx.fillRect(0, 0, w, h);
-    ctx.fillStyle = this.theme.felt;
-    ctx.fillRect(40, 40, w - 80, h - 80);
 
     this.renderPocketThroats(ctx);
+    this.renderPlayAreaFelt(ctx);
     this.renderCushionShadows(ctx);
     this.renderCushionEdges(ctx);
     this.renderPockets(ctx, state.pockets);
@@ -145,6 +144,17 @@ export class PoolRenderer {
       ctx.closePath();
       ctx.fill();
     }
+  }
+
+  // Felt is clipped to the actual play surface so green doesn't bleed into
+  // pocket throats or the chamfered corners at corner pockets.
+  private renderPlayAreaFelt(ctx: CanvasRenderingContext2D) {
+    const outline = this.geometry.playAreaOutline;
+    ctx.fillStyle = this.theme.felt;
+    ctx.beginPath();
+    outline.forEach((p, i) => (i === 0 ? ctx.moveTo(p.x, p.y) : ctx.lineTo(p.x, p.y)));
+    ctx.closePath();
+    ctx.fill();
   }
 
   // Soft shadow the raised cushion nose casts onto the felt
