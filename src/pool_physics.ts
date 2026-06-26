@@ -77,7 +77,7 @@ export type TableGeometry = {
   // Dark throat regions (gaps in the cushion band leading into each pocket),
   // in the same order as `pockets`
   pocketThroats: Point2[][];
-  // Play-surface outline (chamfered at corner pockets, notched at side pockets)
+  // Play-surface outline (notched at side pockets; corner approach is square)
   playAreaOutline: Point2[];
 };
 
@@ -168,15 +168,14 @@ export const getTableGeometry = (w: number, h: number): TableGeometry => {
     }
   ];
 
-  // Throat region of a corner pocket: the part of the cushion band between
-  // the two adjacent jaws. (px, py) is the pocket center at the rail corner,
-  // (sx, sy) mirror the shape toward the table interior.
+  // Throat region of a corner pocket: cushion-band gap only (mirrors side
+  // pockets). Felt bleed stays in the rail band; the chamfered approach
+  // triangle is covered by the play-area felt instead.
   const cornerThroat = (px: number, py: number, sx: number, sy: number): Point2[] => [
     { x: px, y: py },
     { x: px + sx * cornerR, y: py },
     { x: px + sx * (cornerR + TABLE.CUSHION_WIDTH), y: py + sy * TABLE.CUSHION_WIDTH },
     { x: px + sx * TABLE.CUSHION_WIDTH, y: py + sy * TABLE.CUSHION_WIDTH },
-    { x: px + sx * TABLE.CUSHION_WIDTH, y: py + sy * (cornerR + TABLE.CUSHION_WIDTH) },
     { x: px, y: py + sy * cornerR }
   ];
 
@@ -196,17 +195,17 @@ export const getTableGeometry = (w: number, h: number): TableGeometry => {
     cornerThroat(w - inset, h - inset, -1, -1)
   ];
 
+  // Play-surface felt outline: nose-line rectangle with side-pocket notches.
+  // Corner chamfers are covered by this felt; cushion physics still uses jaws.
   const playAreaOutline: Point2[] = [
-    { x: cornerJaw, y: nose },
+    { x: nose, y: nose },
     { x: w / 2 - sideJaw, y: nose },
     { x: w / 2 + sideJaw, y: nose },
-    { x: w - cornerJaw, y: nose },
-    { x: w - nose, y: cornerJaw },
-    { x: w - nose, y: h - cornerJaw },
-    { x: w - cornerJaw, y: h - nose },
-    { x: cornerJaw, y: h - nose },
-    { x: nose, y: h - cornerJaw },
-    { x: nose, y: cornerJaw }
+    { x: w - nose, y: nose },
+    { x: w - nose, y: h - nose },
+    { x: w / 2 + sideJaw, y: h - nose },
+    { x: w / 2 - sideJaw, y: h - nose },
+    { x: nose, y: h - nose }
   ];
 
   return { pockets, cushions, pocketThroats, playAreaOutline };

@@ -134,14 +134,26 @@ describe('Table geometry consistency', () => {
     }
   });
 
-  it('play area outline chamfers corners at pocket mouths', () => {
+  it('play area outline is a nose-line rectangle notched at side pockets', () => {
     const geometry = getTableGeometry(CANVAS_WIDTH, CANVAS_HEIGHT);
-    const cornerJaw = TABLE.CUSHION_INSET + TABLE.CORNER_POCKET_RADIUS + TABLE.CUSHION_WIDTH;
     const nose = TABLE.CUSHION_INSET + TABLE.CUSHION_WIDTH;
+    const sideMouth = Math.sqrt(
+      TABLE.SIDE_POCKET_RADIUS * TABLE.SIDE_POCKET_RADIUS - TABLE.SIDE_POCKET_OFFSET * TABLE.SIDE_POCKET_OFFSET
+    );
+    const sideJaw = sideMouth + TABLE.CUSHION_WIDTH;
 
-    expect(geometry.playAreaOutline).toHaveLength(10);
-    expect(geometry.playAreaOutline[0]).toEqual({ x: cornerJaw, y: nose });
-    expect(geometry.playAreaOutline[9]).toEqual({ x: nose, y: cornerJaw });
+    expect(geometry.playAreaOutline).toHaveLength(8);
+    expect(geometry.playAreaOutline[0]).toEqual({ x: nose, y: nose });
+    expect(geometry.playAreaOutline[1]).toEqual({ x: CANVAS_WIDTH / 2 - sideJaw, y: nose });
+    expect(geometry.playAreaOutline[3]).toEqual({ x: CANVAS_WIDTH - nose, y: nose });
+  });
+
+  it('corner pocket throats stay in the cushion band like side pockets', () => {
+    const geometry = getTableGeometry(CANVAS_WIDTH, CANVAS_HEIGHT);
+
+    expect(geometry.pocketThroats[0]).toHaveLength(5);
+    expect(geometry.pocketThroats[1]).toHaveLength(4);
+    expect(geometry.pocketThroats[2]).toHaveLength(5);
   });
 });
 

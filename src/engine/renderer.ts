@@ -157,7 +157,11 @@ export class PoolRenderer {
     for (let i = 0; i < this.geometry.pocketThroats.length; i++) {
       const poly = this.geometry.pocketThroats[i];
       const pocket = pockets[i];
-      const g = ctx.createRadialGradient(pocket.x, pocket.y, 0, pocket.x, pocket.y, pocket.radius + 20);
+      const outerRadius = poly.reduce(
+        (max, p) => Math.max(max, Math.hypot(p.x - pocket.x, p.y - pocket.y)),
+        pocket.radius
+      );
+      const g = ctx.createRadialGradient(pocket.x, pocket.y, 0, pocket.x, pocket.y, outerRadius);
       g.addColorStop(0, 'rgba(0, 0, 0, 0.55)');
       g.addColorStop(0.45, 'rgba(0, 0, 0, 0.2)');
       g.addColorStop(1, 'rgba(0, 0, 0, 0)');
@@ -172,6 +176,14 @@ export class PoolRenderer {
   // Soft shadow the raised cushion nose casts onto the felt
   private renderCushionShadows(ctx: CanvasRenderingContext2D) {
     const depth = 10;
+    ctx.save();
+    ctx.beginPath();
+    this.geometry.playAreaOutline.forEach((p, i) => (
+      i === 0 ? ctx.moveTo(p.x, p.y) : ctx.lineTo(p.x, p.y)
+    ));
+    ctx.closePath();
+    ctx.clip();
+
     for (const c of this.geometry.cushions) {
       const [, , noseEnd, noseStart] = c.points;
       const { inward } = c;
@@ -191,6 +203,7 @@ export class PoolRenderer {
       ctx.closePath();
       ctx.fill();
     }
+    ctx.restore();
   }
 
   // Outline of each cushion's play-facing surface (jaw, nose, jaw) — the
