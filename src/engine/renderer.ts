@@ -118,8 +118,8 @@ export class PoolRenderer {
     ctx.fillStyle = this.theme.background;
     ctx.fillRect(0, 0, w, h);
 
-    this.renderPocketThroats(ctx);
-    this.renderPlayAreaFelt(ctx);
+    this.renderFelt(ctx);
+    this.renderPocketThroatShading(ctx);
     this.renderCushionShadows(ctx);
     this.renderCushionEdges(ctx);
     this.renderPockets(ctx, state.pockets);
@@ -133,11 +133,16 @@ export class PoolRenderer {
     this.renderCueSpinControl(ctx, state);
   }
 
-  // Dark openings in the cushion band leading into each pocket. These match
-  // the physics cushion gaps exactly, so a ball is only ever drawn over a
-  // dark area when it is genuinely off the playfield.
-  private renderPocketThroats(ctx: CanvasRenderingContext2D) {
-    ctx.fillStyle = this.theme.pocketBg;
+  // Felt covers the play surface and bleeds into pocket throat openings.
+  private renderFelt(ctx: CanvasRenderingContext2D) {
+    ctx.fillStyle = this.theme.felt;
+
+    const outline = this.geometry.playAreaOutline;
+    ctx.beginPath();
+    outline.forEach((p, i) => (i === 0 ? ctx.moveTo(p.x, p.y) : ctx.lineTo(p.x, p.y)));
+    ctx.closePath();
+    ctx.fill();
+
     for (const poly of this.geometry.pocketThroats) {
       ctx.beginPath();
       poly.forEach((p, i) => (i === 0 ? ctx.moveTo(p.x, p.y) : ctx.lineTo(p.x, p.y)));
@@ -146,15 +151,22 @@ export class PoolRenderer {
     }
   }
 
-  // Felt is clipped to the actual play surface so green doesn't bleed into
-  // pocket throats or the chamfered corners at corner pockets.
-  private renderPlayAreaFelt(ctx: CanvasRenderingContext2D) {
-    const outline = this.geometry.playAreaOutline;
-    ctx.fillStyle = this.theme.felt;
-    ctx.beginPath();
-    outline.forEach((p, i) => (i === 0 ? ctx.moveTo(p.x, p.y) : ctx.lineTo(p.x, p.y)));
-    ctx.closePath();
-    ctx.fill();
+  // Darken throat regions toward each pocket hole so felt fades into the pocket.
+  private renderPocketThroatShading(ctx: CanvasRenderingContext2D) {
+    const pockets = this.geometry.pockets;
+    for (let i = 0; i < this.geometry.pocketThroats.length; i++) {
+      const poly = this.geometry.pocketThroats[i];
+      const pocket = pockets[i];
+      const g = ctx.createRadialGradient(pocket.x, pocket.y, 0, pocket.x, pocket.y, pocket.radius + 20);
+      g.addColorStop(0, 'rgba(0, 0, 0, 0.55)');
+      g.addColorStop(0.45, 'rgba(0, 0, 0, 0.2)');
+      g.addColorStop(1, 'rgba(0, 0, 0, 0)');
+      ctx.fillStyle = g;
+      ctx.beginPath();
+      poly.forEach((p, j) => (j === 0 ? ctx.moveTo(p.x, p.y) : ctx.lineTo(p.x, p.y)));
+      ctx.closePath();
+      ctx.fill();
+    }
   }
 
   // Soft shadow the raised cushion nose casts onto the felt
