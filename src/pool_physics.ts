@@ -23,15 +23,33 @@ export type PocketedEvent = {
 // Default physics properties for realistic pool ball behavior
 export const PHYSICS_DEFAULTS = {
   BALL_MASS: 0.17,            // kg (standard pool ball is ~170g)
-  BALL_RESTITUTION: 0.92,     // Bounciness of ball-to-ball collisions
-  BALL_FRICTION: 0.001,           // No ball-to-ball friction so physics matches guide line prediction
+  BALL_RESTITUTION: 0.97,     // Nearly elastic ball-to-ball collisions
+  BALL_FRICTION: 0.1,         // Ball-to-ball and ball-to-rail contact friction
   CUSHION_RESTITUTION: 0.75,  // Cushion bounce factor
   CUSHION_FRICTION: 0.15,     // Cushion surface friction
-  ROLLING_FRICTION: 0.015,     // Felt resistance (simulated)
-  LINEAR_DAMPING: 0.8,        // Simulates rolling resistance on felt
-  ANGULAR_DAMPING: 0.9,       // Simulates rotational friction on felt
+  ROLLING_FRICTION: 0.015,    // Felt resistance (simulated)
+  LINEAR_DAMPING: 0.4,        // Cloth drag on linear motion
+  ANGULAR_DAMPING: 0.8,       // Spin decay over time
   MAX_SHOT_POWER: 9,          // Maximum shot power (affects impulse strength)
 } as const;
+
+// Cue ball spin physics constants
+export const SPIN_DEFAULTS = {
+  CLOTH_FRICTION: 0.15,       // Friction per physics step converting spin to velocity
+  ROLLING_THRESHOLD: 5.0,     // Spin-vs-velocity gap to consider "sliding"
+  SPIN_FACTOR: 50,            // How much tip offset creates spin
+  FOLLOW_BOOST: 0.02,         // Topspin follow-through strength after collision
+  DRAW_MAGNITUDE: 0.02,       // Backspin draw-back strength after collision
+  SIDESPIN_SWERVE: 0.001,     // How much sidespin curves the ball path
+  SIDESPIN_DECAY: 0.98,       // Sidespin decay per step (2% loss)
+  DRAW_SPIN_RETENTION: 0.3,   // Spin retained after draw collision
+} as const;
+
+export type CueBallSpin = {
+  x: number;       // sidespin: left (-) / right (+)
+  y: number;       // topspin (+) / backspin (-)
+  isSliding: boolean;
+};
 
 export const physicsConfig = { ...PHYSICS_DEFAULTS };
 
@@ -518,7 +536,7 @@ export const computeSubSteps = (balls: Ball[], dt: number): number => {
   return Math.min(needed, 16); // cap to avoid runaway subdivision
 };
 
-export const applyRollingFriction = (balls: Ball[], dt: number) => {
+export const applyRollingFriction = (balls: Ball[], _dt: number) => {
   const frictionCoeff = physicsConfig.ROLLING_FRICTION;
   const pixelRadius = 12;
   const physRadius = pixelRadius / SCALE;
@@ -531,6 +549,7 @@ export const applyRollingFriction = (balls: Ball[], dt: number) => {
       // Apply friction force opposite to velocity
       const frictionForce = frictionCoeff * physicsConfig.BALL_MASS * 9.81; // F = mu * m * g
       const deceleration = frictionForce / physicsConfig.BALL_MASS;
+      const dt = FIXED_DT;
 
       // Reduce velocity slightly each step
       const newSpeed = Math.max(0, speed - deceleration * dt);
@@ -542,21 +561,17 @@ export const applyRollingFriction = (balls: Ball[], dt: number) => {
         z: linvel.z * factor
       }, true);
 
-      // Also apply rolling: angular velocity should match linear velocity
+      // Sync angular velocity to match linear velocity for visual rolling
       // For a rolling ball: omega = v / r
-      if (speed > 0.05) {
-        const targetAngVelX = -linvel.z / physRadius; // Rotation around X from Z motion
-        const targetAngVelZ = linvel.x / physRadius;  // Rotation around Z from X motion
-
-        const currentAngVel = ball.body.angvel();
-        // Blend toward proper rolling (gradual correction)
-        const blend = 0.1;
-        ball.body.setAngvel({
-          x: currentAngVel.x * (1 - blend) + targetAngVelX * blend,
-          y: currentAngVel.y * 0.95, // Damp vertical spin
-          z: currentAngVel.z * (1 - blend) + targetAngVelZ * blend
-        }, true);
-      }
+      const targetAngVelX = -linvel.z / physRadius;
+      const targetAngVelZ = linvel.x / physRadius;
+      const currentAngVel = ball.body.angvel();
+      const blend = 0.1;
+      ball.body.setAngvel({
+        x: currentAngVel.x * (1 - blend) + targetAngVelX * blend,
+        y: currentAngVel.y * 0.95,
+        z: currentAngVel.z * (1 - blend) + targetAngVelZ * blend
+      }, true);
     } else {
       // Stop very slow balls completely
       ball.body.setLinvel({ x: 0, y: 0, z: 0 }, true);
@@ -571,4 +586,124 @@ export const applyRollingFriction = (balls: Ball[], dt: number) => {
       ball.body.setLinvel({ x: linv.x, y: 0, z: linv.z }, true);
     }
   }
+};
+
+/**
+ * Initialize cue ball spin from a shot's tip offset.
+ */
+export const initCueBallSpin = (
+  topspin: number,
+  sidespin: number,
+  power: number
+): CueBallSpin => ({
+  y: topspin * power * SPIN_DEFAULTS.SPIN_FACTOR,
+  x: sidespin * power * SPIN_DEFAULTS.SPIN_FACTOR,
+  isSliding: true,
+});
+
+/**
+ * Create a zeroed-out spin state.
+ */
+export const zeroCueBallSpin = (): CueBallSpin => ({
+  x: 0, y: 0, isSliding: false,
+});
+
+/**
+ * The core spin-friction update loop. Each physics step, cloth friction
+ * drags spin and velocity toward each other until they match (pure rolling).
+ */
+export const updateCueBallSpin = (spin: CueBallSpin, cueBall: Ball): void => {
+  const linvel = cueBall.body.linvel();
+  const speed = Math.sqrt(linvel.x * linvel.x + linvel.z * linvel.z);
+  const pixelRadius = 12;
+  const radius = pixelRadius / SCALE;
+
+  // Ball has stopped — kill spin
+  if (speed < 0.01) {
+    spin.x = 0;
+    spin.y = 0;
+    spin.isSliding = false;
+    return;
+  }
+
+  // What spin SHOULD be for pure rolling
+  const expectedSpin = speed / radius;
+  const spinDiff = spin.y - expectedSpin;
+
+  // Travel direction unit vector
+  const dirX = linvel.x / speed;
+  const dirZ = linvel.z / speed;
+
+  if (Math.abs(spinDiff) > SPIN_DEFAULTS.ROLLING_THRESHOLD) {
+    // --- SLIDING PHASE ---
+    // Friction nudges linear velocity toward what spin demands
+    const frictionForce = SPIN_DEFAULTS.CLOTH_FRICTION * Math.sign(spinDiff);
+
+    cueBall.body.setLinvel({
+      x: linvel.x + frictionForce * dirX,
+      y: linvel.y,
+      z: linvel.z + frictionForce * dirZ,
+    }, true);
+
+    // Spin bleeds toward rolling state
+    spin.y -= frictionForce * (radius * 3);
+    spin.isSliding = true;
+  } else {
+    // --- ROLLING PHASE ---
+    // Spin locked to velocity — no more sliding friction
+    spin.y = expectedSpin;
+    spin.isSliding = false;
+  }
+
+  // Sidespin causes subtle swerve (curved path)
+  if (Math.abs(spin.x) > 0.1) {
+    // Perpendicular direction (rotate 90 degrees)
+    const perpX = -dirZ;
+    const perpZ = dirX;
+
+    const currentLinvel = cueBall.body.linvel();
+    cueBall.body.setLinvel({
+      x: currentLinvel.x + spin.x * SPIN_DEFAULTS.SIDESPIN_SWERVE * perpX,
+      y: currentLinvel.y,
+      z: currentLinvel.z + spin.x * SPIN_DEFAULTS.SIDESPIN_SWERVE * perpZ,
+    }, true);
+
+    // Decay sidespin
+    spin.x *= SPIN_DEFAULTS.SIDESPIN_DECAY;
+  }
+};
+
+/**
+ * Apply spin-dependent impulse after the cue ball hits an object ball.
+ * Topspin → follow (cue chases object ball).
+ * Backspin → draw (cue brakes or reverses).
+ */
+export const applyCueBallCollisionSpin = (spin: CueBallSpin, cueBall: Ball): void => {
+  const linvel = cueBall.body.linvel();
+  const speed = Math.sqrt(linvel.x * linvel.x + linvel.z * linvel.z);
+  if (speed < 0.01) return;
+
+  const dirX = linvel.x / speed;
+  const dirZ = linvel.z / speed;
+
+  if (spin.y > 0) {
+    // TOPSPIN (follow): cue ball chases the object ball
+    const boost = spin.y * SPIN_DEFAULTS.FOLLOW_BOOST;
+    cueBall.body.applyImpulse({
+      x: dirX * boost,
+      y: 0,
+      z: dirZ * boost,
+    }, true);
+  } else if (spin.y < 0) {
+    // BACKSPIN (draw): cue ball brakes or reverses
+    const drawForce = Math.abs(spin.y) * SPIN_DEFAULTS.DRAW_MAGNITUDE;
+    cueBall.body.applyImpulse({
+      x: -dirX * drawForce,
+      y: 0,
+      z: -dirZ * drawForce,
+    }, true);
+    // Spin spent on impact
+    spin.y *= SPIN_DEFAULTS.DRAW_SPIN_RETENTION;
+  }
+  // Center-ball hit (spin.y ≈ 0): no impulse, RAPIER's default is correct
 };

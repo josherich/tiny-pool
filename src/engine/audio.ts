@@ -116,8 +116,11 @@ export class AudioManager {
     eventQueue: RAPIER.EventQueue,
     world: RAPIER.World,
     balls: Ball[]
-  ) {
+  ): { cueBallHitObjectBall: boolean } {
     const ballHandles = new Set(balls.map(b => b.collider.handle));
+    const cueBallHandle = balls.find(b => b.type === 'cue')?.collider.handle;
+    let cueBallHitObjectBall = false;
+
     eventQueue.drainCollisionEvents((handle1, handle2, started) => {
       if (!started) return;
       const h1Ball = ballHandles.has(handle1);
@@ -131,6 +134,12 @@ export class AudioManager {
       const b2 = c2.parent();
 
       if (h1Ball && h2Ball) {
+        // Detect cue ball hitting an object ball
+        if (cueBallHandle !== undefined &&
+            (handle1 === cueBallHandle || handle2 === cueBallHandle)) {
+          cueBallHitObjectBall = true;
+        }
+
         if (now - this.lastBallCollisionMs < 45) return;
         const v1 = b1?.linvel(), v2 = b2?.linvel();
         const rel = v1 && v2 ? Math.hypot(v1.x - v2.x, v1.y - v2.y, v1.z - v2.z) : 0;
@@ -153,6 +162,8 @@ export class AudioManager {
       this.play('cushionHit', 0.95 + Math.random() * 0.1, undefined, vol);
       this.lastCushionHitMs = now;
     });
+
+    return { cueBallHitObjectBall };
   }
 
   destroy() {

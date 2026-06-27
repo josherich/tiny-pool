@@ -10,7 +10,11 @@ import {
   physicsConfig,
   checkPockets,
   applyRollingFriction,
-  computeSubSteps
+  computeSubSteps,
+  initCueBallSpin,
+  updateCueBallSpin,
+  applyCueBallCollisionSpin,
+  type CueBallSpin
 } from './pool_physics';
 import { allBallsStopped } from './pool_rules';
 
@@ -170,17 +174,19 @@ export function simulateShot(
   const impulseZ = Math.sin(input.angle) * impulseStrength;
 
   cueBall.body.applyImpulse({ x: impulseX, y: 0, z: impulseZ }, true);
-  cueBall.body.applyTorqueImpulse({
-    x: -impulseZ * input.topspin,
-    y: impulseStrength * input.sidespin,
-    z: impulseX * input.topspin
-  }, true);
+
+  // Track spin separately (matches live game loop)
+  const spin: CueBallSpin = initCueBallSpin(input.topspin, input.sidespin, input.power);
 
   const allPocketedEvents: PocketedEvent[] = [];
   const pocketedThisShot: PocketedThisShot = { solids: [], stripes: [], cueBall: false };
   let steps = 0;
 
   const canvasProxy = { width: canvasWidth, height: canvasHeight };
+
+  // Set up collision detection for spin transfer
+  const eventQueue = new RAPIER.EventQueue(true);
+  const cueBallHandle = cueBall.collider.handle;
 
   while (steps < MAX_SIM_STEPS) {
     // Adaptive sub-stepping matching the live game loop
@@ -189,7 +195,21 @@ export function simulateShot(
     world.timestep = subDt;
 
     for (let s = 0; s < subSteps; s++) {
-      world.step();
+      world.step(eventQueue);
+
+      // Detect cue ball collisions for spin transfer
+      const ballHandles = new Set(balls.map(b => b.collider.handle));
+      eventQueue.drainCollisionEvents((handle1: number, handle2: number, started: boolean) => {
+        if (!started) return;
+        const h1Ball = ballHandles.has(handle1);
+        const h2Ball = ballHandles.has(handle2);
+        if (h1Ball && h2Ball && spin.isSliding) {
+          if (handle1 === cueBallHandle || handle2 === cueBallHandle) {
+            const cb = balls.find(b => b.type === 'cue');
+            if (cb) applyCueBallCollisionSpin(spin, cb);
+          }
+        }
+      });
 
       const events = checkPockets({
         world,
@@ -205,10 +225,18 @@ export function simulateShot(
 
     applyRollingFriction(balls, FIXED_DT);
 
+    // Update cue ball spin friction
+    const cb = balls.find(b => b.type === 'cue');
+    if (cb && spin.isSliding) {
+      updateCueBallSpin(spin, cb);
+    }
+
     steps++;
 
     if (steps > 10 && allBallsStopped(balls)) break;
   }
+
+  eventQueue.free();
 
   const finalSnapshot: GameStateSnapshot = {
     balls: serializeBalls(balls),
