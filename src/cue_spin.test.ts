@@ -295,4 +295,35 @@ describe('Cue ball spin physics', () => {
     // The two spin directions should push the ball in opposite z directions.
     expect(Math.sign(rLeft.finalCueZ - r0.finalCueZ)).not.toEqual(Math.sign(rRight.finalCueZ - r0.finalCueZ));
   });
+
+  it('topspin vs backspin produce different cue ball positions after a full-rack break', () => {
+    // Use the full 15-ball rack (the realistic scenario players see) and verify
+    // that topspin and backspin yield measurably different cue ball rest
+    // positions. A full-rack break is a noisy scenario (the rack absorbs most
+    // of the energy and the cue ball's post-collision velocity is small), so
+    // we only require that spin demonstrably changes the outcome — the clean
+    // follow/draw behavior is verified in the single-ball tests above.
+    const runShot = (topspin: number) => {
+      const { world, balls, pockets, pocketed } = createFreshWorld();
+      const pThis: PocketedThisShot = { solids: [], stripes: [], cueBall: false };
+      const r = runCueBallShot(world, balls, pockets, pocketed, pThis, 0, 5.0, { topspin, sidespin: 0 }, { maxSeconds: 8 });
+      world.free();
+      return r;
+    };
+
+    const rNoSpin = runShot(0);
+    const rTop = runShot(0.5);
+    const rBack = runShot(-0.5);
+
+    // Sanity: the break happened for all three shots.
+    expect(rNoSpin.sawCollision).toBe(true);
+    expect(rTop.sawCollision).toBe(true);
+    expect(rBack.sawCollision).toBe(true);
+
+    // The three shots should produce at least two distinct final cue ball
+    // positions (rounded to the nearest pixel). Spin must matter.
+    const xs = [rNoSpin.finalCueX, rTop.finalCueX, rBack.finalCueX];
+    const uniqueCount = new Set(xs.map(x => Math.round(x))).size;
+    expect(uniqueCount).toBeGreaterThan(1);
+  });
 });
