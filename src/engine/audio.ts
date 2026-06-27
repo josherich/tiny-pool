@@ -124,35 +124,45 @@ export class AudioManager {
       const h2Ball = ballHandles.has(handle2);
       if (!h1Ball && !h2Ball) return;
 
-      const now = performance.now();
       const c1 = world.getCollider(handle1);
       const c2 = world.getCollider(handle2);
       const b1 = c1.parent();
       const b2 = c2.parent();
 
       if (h1Ball && h2Ball) {
-        if (now - this.lastBallCollisionMs < 45) return;
-        const v1 = b1?.linvel(), v2 = b2?.linvel();
-        const rel = v1 && v2 ? Math.hypot(v1.x - v2.x, v1.y - v2.y, v1.z - v2.z) : 0;
-        const norm = Math.min(rel, 24) / 24;
-        const vol = 0.04 + Math.pow(norm, 1.75) * 0.96;
-        this.play(Math.random() < 0.5 ? 'ballCollision' : 'ballCollisionAlt', 0.94 + Math.random() * 0.12, undefined, vol);
-        this.lastBallCollisionMs = now;
+        if (b1 && b2) this.handleBallBallCollision(b1 as unknown as Ball, b2 as unknown as Ball);
         return;
       }
 
-      const h1Fixed = c1.parent()?.isFixed() ?? false;
-      const h2Fixed = c2.parent()?.isFixed() ?? false;
+      const h1Fixed = b1?.isFixed() ?? false;
+      const h2Fixed = b2?.isFixed() ?? false;
       const isCushion = (h1Ball && h2Fixed) || (h2Ball && h1Fixed);
-      if (!isCushion || now - this.lastCushionHitMs < 70) return;
-
-      const bv = h1Ball ? b1?.linvel() : b2?.linvel();
-      const spd = bv ? Math.hypot(bv.x, bv.y, bv.z) : 0;
-      const norm = Math.min(spd, 20) / 20;
-      const vol = 0.03 + Math.pow(norm, 1.9) * 0.9;
-      this.play('cushionHit', 0.95 + Math.random() * 0.1, undefined, vol);
-      this.lastCushionHitMs = now;
+      if (!isCushion) return;
+      const ball = (h1Ball ? b1 : b2) as unknown as Ball | null;
+      if (ball) this.handleBallCushionCollision(ball);
     });
+  }
+
+  handleBallBallCollision(b1: Ball, b2: Ball) {
+    const now = performance.now();
+    if (now - this.lastBallCollisionMs < 45) return;
+    const v1 = b1.body.linvel(), v2 = b2.body.linvel();
+    const rel = Math.hypot(v1.x - v2.x, v1.y - v2.y, v1.z - v2.z);
+    const norm = Math.min(rel, 24) / 24;
+    const vol = 0.04 + Math.pow(norm, 1.75) * 0.96;
+    this.play(Math.random() < 0.5 ? 'ballCollision' : 'ballCollisionAlt', 0.94 + Math.random() * 0.12, undefined, vol);
+    this.lastBallCollisionMs = now;
+  }
+
+  handleBallCushionCollision(ball: Ball) {
+    const now = performance.now();
+    if (now - this.lastCushionHitMs < 70) return;
+    const bv = ball.body.linvel();
+    const spd = Math.hypot(bv.x, bv.y, bv.z);
+    const norm = Math.min(spd, 20) / 20;
+    const vol = 0.03 + Math.pow(norm, 1.9) * 0.9;
+    this.play('cushionHit', 0.95 + Math.random() * 0.1, undefined, vol);
+    this.lastCushionHitMs = now;
   }
 
   destroy() {

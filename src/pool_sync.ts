@@ -10,6 +10,8 @@ import {
   physicsConfig,
   checkPockets,
   applyRollingFriction,
+  applyCushionSpinToBall,
+  processCollisionEvents,
   computeSubSteps
 } from './pool_physics';
 import { allBallsStopped } from './pool_rules';
@@ -170,10 +172,16 @@ export function simulateShot(
   const impulseZ = Math.sin(input.angle) * impulseStrength;
 
   cueBall.body.applyImpulse({ x: impulseX, y: 0, z: impulseZ }, true);
+
+  // Spin torque sign is chosen so positive topspin yields extra forward rotation
+  // (follow) and negative topspin yields reverse rotation (draw) regardless of
+  // shot direction. Sidespin (vertical-axis torque) is handled at cushion
+  // bounces via applyCushionSpinToBall.
+  const spinScale = physicsConfig.SPIN_SCALE;
   cueBall.body.applyTorqueImpulse({
-    x: -impulseZ * input.topspin,
-    y: impulseStrength * input.sidespin,
-    z: impulseX * input.topspin
+    x: impulseZ * input.topspin * spinScale,
+    y: impulseStrength * input.sidespin * spinScale,
+    z: -impulseX * input.topspin * spinScale
   }, true);
 
   const allPocketedEvents: PocketedEvent[] = [];
@@ -181,6 +189,7 @@ export function simulateShot(
   let steps = 0;
 
   const canvasProxy = { width: canvasWidth, height: canvasHeight };
+  const eventQueue = new RAPIER.EventQueue(true);
 
   while (steps < MAX_SIM_STEPS) {
     // Adaptive sub-stepping matching the live game loop
@@ -189,7 +198,10 @@ export function simulateShot(
     world.timestep = subDt;
 
     for (let s = 0; s < subSteps; s++) {
-      world.step();
+      world.step(eventQueue);
+      processCollisionEvents(eventQueue, world, balls, {
+        onBallCushionCollision: (ball) => applyCushionSpinToBall(ball, canvasWidth, canvasHeight)
+      });
 
       const events = checkPockets({
         world,

@@ -31,6 +31,10 @@ export const PHYSICS_DEFAULTS = {
   LINEAR_DAMPING: 0.8,        // Simulates rolling resistance on felt
   ANGULAR_DAMPING: 0.9,       // Simulates rotational friction on felt
   MAX_SHOT_POWER: 9,          // Maximum shot power (affects impulse strength)
+  TABLE_FRICTION: 12.0,       // Ball-cloth sliding friction (low enough to preserve spin pre-collision, high enough to manifest spin effects post-collision)
+  SPIN_SCALE: 3.5,            // Scales cue-spin torque so top/back/side spin produce visible effects
+  SIDESPIN_DECAY: 0.4,        // Per-second decay rate for vertical-axis spin (english)
+  CUSHION_GRIP: 0.7,          // Fraction of sidespin transferred to linear velocity at cushion bounce
 } as const;
 
 export const physicsConfig = { ...PHYSICS_DEFAULTS };
@@ -44,6 +48,10 @@ export const ROLLING_FRICTION = PHYSICS_DEFAULTS.ROLLING_FRICTION;
 export const LINEAR_DAMPING = PHYSICS_DEFAULTS.LINEAR_DAMPING;
 export const ANGULAR_DAMPING = PHYSICS_DEFAULTS.ANGULAR_DAMPING;
 export const MAX_SHOT_POWER = PHYSICS_DEFAULTS.MAX_SHOT_POWER;
+export const TABLE_FRICTION = PHYSICS_DEFAULTS.TABLE_FRICTION;
+export const SPIN_SCALE = PHYSICS_DEFAULTS.SPIN_SCALE;
+export const SIDESPIN_DECAY = PHYSICS_DEFAULTS.SIDESPIN_DECAY;
+export const CUSHION_GRIP = PHYSICS_DEFAULTS.CUSHION_GRIP;
 
 // Canvas to physics scale (pixels per physics unit)
 export const SCALE = 5;
@@ -519,51 +527,87 @@ export const computeSubSteps = (balls: Ball[], dt: number): number => {
 };
 
 export const applyRollingFriction = (balls: Ball[], dt: number) => {
-  const frictionCoeff = physicsConfig.ROLLING_FRICTION;
+  const rollingCoeff = physicsConfig.ROLLING_FRICTION;
+  const tableMu = physicsConfig.TABLE_FRICTION;
+  const sidespinDecay = physicsConfig.SIDESPIN_DECAY;
   const pixelRadius = 12;
   const physRadius = pixelRadius / SCALE;
+  const g = 9.81;
+  // Solid-sphere rotational inertia factor: I = (2/5) m r^2
+  // Combined with r at the contact point, friction that produces a linear
+  // velocity change dv also produces an angular change (5 / 2r) dv, so the
+  // surface velocity v_s = v + ω × r_contact shrinks by (7/2) dv.
+  const maxSurfaceDv = tableMu * g * dt;          // linear-velocity cap per step
+  const sidespinDampFactor = Math.exp(-sidespinDecay * dt);
 
   for (const ball of balls) {
     const linvel = ball.body.linvel();
     const speed = Math.sqrt(linvel.x * linvel.x + linvel.z * linvel.z);
 
+    // --- Rolling resistance: gentle constant deceleration opposing motion ---
+    let curVx = linvel.x;
+    let curVz = linvel.z;
     if (speed > 0.05) {
-      // Apply friction force opposite to velocity
-      const frictionForce = frictionCoeff * physicsConfig.BALL_MASS * 9.81; // F = mu * m * g
-      const deceleration = frictionForce / physicsConfig.BALL_MASS;
-
-      // Reduce velocity slightly each step
+      const deceleration = rollingCoeff * g;
       const newSpeed = Math.max(0, speed - deceleration * dt);
-      const factor = speed > 0 ? newSpeed / speed : 0;
+      const factor = newSpeed / speed;
+      curVx = linvel.x * factor;
+      curVz = linvel.z * factor;
+      ball.body.setLinvel({ x: curVx, y: linvel.y, z: curVz }, true);
+    }
 
-      ball.body.setLinvel({
-        x: linvel.x * factor,
-        y: linvel.y,
-        z: linvel.z * factor
+    // --- Ball-cloth sliding friction: drives the ball toward pure rolling
+    // and converts top/back spin into linear acceleration/deceleration. ---
+    // Surface velocity at the contact point (bottom of ball, r = (0, -r, 0)):
+    //   v_s = v + ω × r_contact
+    //   (ω × r)_x = ω_z * r,  (ω × r)_z = -ω_x * r   (only horizontal parts matter)
+    const angvel = ball.body.angvel();
+    const vsX = curVx + angvel.z * physRadius;
+    const vsZ = curVz - angvel.x * physRadius;
+    const vsMag = Math.sqrt(vsX * vsX + vsZ * vsZ);
+
+    if (vsMag > 1e-4) {
+      // Cap the linear-velocity change per step at μ g dt (the max friction
+      // impulse per unit mass). dvNeeded = (2/7) * |v_s| would bring v_s to
+      // zero in one step; clamp to the per-step cap so friction can't inject
+      // energy by reversing v_s.
+      const dvNeeded = (2 / 7) * vsMag;
+      const dvActual = Math.min(maxSurfaceDv, dvNeeded);
+      const k = dvActual / vsMag;          // linear-velocity change per unit v_s
+      const dvLinX = -k * vsX;
+      const dvLinZ = -k * vsZ;
+      // Δω from friction impulse at contact (r × J)/I, simplified for solid sphere:
+      //   Δω_x =  (5 / 2r) * k * vs_z
+      //   Δω_z = -(5 / 2r) * k * vs_x
+      const spinFactor = (5 / (2 * physRadius)) * k;
+      const dwX = spinFactor * vsZ;
+      const dwZ = -spinFactor * vsX;
+
+      ball.body.setLinvel({ x: curVx + dvLinX, y: linvel.y, z: curVz + dvLinZ }, true);
+      ball.body.setAngvel({
+        x: angvel.x + dwX,
+        y: angvel.y * sidespinDampFactor,
+        z: angvel.z + dwZ
       }, true);
-
-      // Also apply rolling: angular velocity should match linear velocity
-      // For a rolling ball: omega = v / r
-      if (speed > 0.05) {
-        const targetAngVelX = -linvel.z / physRadius; // Rotation around X from Z motion
-        const targetAngVelZ = linvel.x / physRadius;  // Rotation around Z from X motion
-
-        const currentAngVel = ball.body.angvel();
-        // Blend toward proper rolling (gradual correction)
-        const blend = 0.1;
-        ball.body.setAngvel({
-          x: currentAngVel.x * (1 - blend) + targetAngVelX * blend,
-          y: currentAngVel.y * 0.95, // Damp vertical spin
-          z: currentAngVel.z * (1 - blend) + targetAngVelZ * blend
-        }, true);
-      }
     } else {
-      // Stop very slow balls completely
+      // Already rolling (or stationary): just damp residual sidespin.
+      if (Math.abs(angvel.y) > 1e-4) {
+        ball.body.setAngvel({ x: angvel.x, y: angvel.y * sidespinDampFactor, z: angvel.z }, true);
+      }
+    }
+
+    // --- Stop very slow balls completely so the table can settle ---
+    // Match the original behavior: hard-stop at low linear speed so the
+    // simulation converges deterministically. With natural rolling seeded at
+    // shot time, a stationary ball has near-zero angular velocity too, so this
+    // doesn't kill draw shots (which keep linear speed > 0.05 while the ball
+    // still has backspin-driven inertia).
+    if (speed < 0.05) {
       ball.body.setLinvel({ x: 0, y: 0, z: 0 }, true);
       ball.body.setAngvel({ x: 0, y: 0, z: 0 }, true);
     }
 
-    // Keep balls on the table (Y should be at ball radius)
+    // Keep balls on the table surface (Y = physRadius)
     const pos = ball.body.translation();
     if (Math.abs(pos.y - physRadius) > 0.01) {
       ball.body.setTranslation({ x: pos.x, y: physRadius, z: pos.z }, true);
@@ -571,4 +615,131 @@ export const applyRollingFriction = (balls: Ball[], dt: number) => {
       ball.body.setLinvel({ x: linv.x, y: 0, z: linv.z }, true);
     }
   }
+};
+
+/**
+ * Determine the inward unit normal of the cushion the ball is currently
+ * touching, in canvas-pixel space (y here corresponds to physics z). Returns
+ * null if the ball is not in contact with any cushion. Only the four primary
+ * cushion directions are recognized; pocket throats are intentionally ignored
+ * since the ball is either already pocketed or about to be.
+ */
+export const getCushionInwardAt = (
+  pixelX: number,
+  pixelY: number,
+  tableWidth: number,
+  tableHeight: number
+): { x: number; y: number } | null => {
+  const nose = TABLE.CUSHION_INSET + TABLE.CUSHION_WIDTH;
+  const ballR = TABLE.BALL_RADIUS;
+  const touch = ballR + 2;
+
+  const dTop = pixelY - nose;
+  const dBottom = tableHeight - nose - pixelY;
+  const dLeft = pixelX - nose;
+  const dRight = tableWidth - nose - pixelX;
+
+  const candidates: Array<{ dist: number; normal: { x: number; y: number } }> = [];
+  if (Math.abs(dTop) <= touch) candidates.push({ dist: Math.abs(dTop), normal: { x: 0, y: 1 } });
+  if (Math.abs(dBottom) <= touch) candidates.push({ dist: Math.abs(dBottom), normal: { x: 0, y: -1 } });
+  if (Math.abs(dLeft) <= touch) candidates.push({ dist: Math.abs(dLeft), normal: { x: 1, y: 0 } });
+  if (Math.abs(dRight) <= touch) candidates.push({ dist: Math.abs(dRight), normal: { x: -1, y: 0 } });
+
+  if (candidates.length === 0) return null;
+  candidates.sort((a, b) => a.dist - b.dist);
+  return candidates[0].normal;
+};
+
+/**
+ * Apply sidespin (english) effect when a ball bounces off a cushion. The
+ * cushion exerts a tangential friction impulse that converts vertical-axis
+ * spin into linear velocity along the cushion, and reduces the spin itself.
+ * Called once per detected ball-cushion collision start.
+ */
+export const applyCushionSpinToBall = (
+  ball: Ball,
+  tableWidth: number,
+  tableHeight: number
+) => {
+  const ω = ball.body.angvel();
+  if (Math.abs(ω.y) < 0.1) return;
+
+  const pos = ball.body.translation();
+  const pixelX = pos.x * SCALE;
+  const pixelY = pos.z * SCALE;
+  const normal = getCushionInwardAt(pixelX, pixelY, tableWidth, tableHeight);
+  if (!normal) return;
+
+  const physR = TABLE.BALL_RADIUS / SCALE;
+  // Surface velocity at the cushion contact point due to vertical-axis spin
+  // is ω_y * r in the tangential direction. Tangent t = (-n_z, 0, n_x), which
+  // in canvas space (y ↔ z) is (-normal.y, normal.x).
+  const spinSurfaceSpeed = ω.y * physR;
+  const grip = physicsConfig.CUSHION_GRIP;
+  const boost = spinSurfaceSpeed * grip;
+
+  const v = ball.body.linvel();
+  ball.body.setLinvel({
+    x: v.x + boost * -normal.y,
+    y: v.y,
+    z: v.z + boost * normal.x
+  }, true);
+
+  // Part of the sidespin is transferred to linear momentum at the cushion.
+  ball.body.setAngvel({
+    x: ω.x,
+    y: ω.y * (1 - grip * 0.5),
+    z: ω.z
+  }, true);
+};
+
+export type CollisionHandlers = {
+  onBallBallCollision?: (b1: Ball, b2: Ball) => void;
+  onBallCushionCollision?: (ball: Ball) => void;
+};
+
+/**
+ * Drain Rapier's collision event queue once and dispatch each event to the
+ * appropriate handler. Used by the live game loop (with audio + cushion-spin
+ * callbacks) and by `simulateShot` (cushion-spin only) so both pipelines apply
+ * identical physics.
+ */
+export const processCollisionEvents = (
+  eventQueue: RAPIER.EventQueue,
+  world: RAPIER.World,
+  balls: Ball[],
+  handlers: CollisionHandlers
+) => {
+  if (!handlers.onBallBallCollision && !handlers.onBallCushionCollision) {
+    // Drain without doing anything so the queue doesn't accumulate stale events.
+    eventQueue.drainCollisionEvents(() => {});
+    return;
+  }
+
+  const ballHandles = new Map<number, Ball>(balls.map(b => [b.collider.handle, b]));
+
+  eventQueue.drainCollisionEvents((handle1, handle2, started) => {
+    if (!started) return;
+
+    const ball1 = ballHandles.get(handle1);
+    const ball2 = ballHandles.get(handle2);
+    if (!ball1 && !ball2) return;
+
+    const c1 = world.getCollider(handle1);
+    const c2 = world.getCollider(handle2);
+
+    if (ball1 && ball2) {
+      handlers.onBallBallCollision?.(ball1, ball2);
+      return;
+    }
+
+    const ball = ball1 ?? ball2;
+    if (!ball) return;
+    const otherIsFixed = ball1
+      ? (c2.parent()?.isFixed() ?? false)
+      : (c1.parent()?.isFixed() ?? false);
+    if (otherIsFixed) {
+      handlers.onBallCushionCollision?.(ball);
+    }
+  });
 };

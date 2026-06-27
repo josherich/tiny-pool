@@ -9,6 +9,8 @@ import {
   checkPockets,
   getPlacementBounds,
   applyRollingFriction,
+  applyCushionSpinToBall,
+  processCollisionEvents,
   computeSubSteps,
   syncPhysicsConfig,
   clonePocketed,
@@ -360,11 +362,22 @@ class PoolGameEngine {
     const impulseX = Math.cos(input.angle) * impulseStrength;
     const impulseZ = Math.sin(input.angle) * impulseStrength;
 
+    // Linear impulse launches the ball. The cloth's sliding friction
+    // (applyRollingFriction) develops natural rolling over the next ~0.1s;
+    // a center hit therefore loses about (2/7) of v to that spin-up, which
+    // matches real-world pool physics for a cue strike that imparts no spin.
     cueBall.body.applyImpulse({ x: impulseX, y: 0, z: impulseZ }, true);
+
+    // Spin torque is layered on top so top/back/side spin produce visible
+    // effects: positive topspin → extra forward rotation (follow), negative
+    // topspin → reverse rotation (draw), sidespin → english at the cushions.
+    // Sign is chosen so the same input.topspin / input.sidespin direction
+    // works regardless of shot angle.
+    const spinScale = physicsConfig.SPIN_SCALE;
     cueBall.body.applyTorqueImpulse({
-      x: -impulseZ * input.topspin,
-      y: impulseStrength * input.sidespin,
-      z: impulseX * input.topspin
+      x: impulseZ * input.topspin * spinScale,
+      y: impulseStrength * input.sidespin * spinScale,
+      z: -impulseX * input.topspin * spinScale
     }, true);
 
     this.gameStarted = true;
@@ -408,7 +421,17 @@ class PoolGameEngine {
 
       for (let s = 0; s < subSteps; s++) {
         this.world.step(this.eventQueue || undefined);
-        if (this.eventQueue) this.audio.processCollisionEvents(this.eventQueue, this.world, this.balls);
+        if (this.eventQueue) {
+          const w = this.canvas.width;
+          const h = this.canvas.height;
+          processCollisionEvents(this.eventQueue, this.world, this.balls, {
+            onBallBallCollision: (b1, b2) => this.audio.handleBallBallCollision(b1, b2),
+            onBallCushionCollision: (ball) => {
+              this.audio.handleBallCushionCollision(ball);
+              applyCushionSpinToBall(ball, w, h);
+            }
+          });
+        }
         this.checkPockets();
       }
       applyRollingFriction(this.balls, FIXED_DT);
