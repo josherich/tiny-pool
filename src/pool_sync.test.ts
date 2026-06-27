@@ -119,6 +119,52 @@ describe('Deterministic Physics', () => {
   });
 });
 
+
+
+describe('Cue ball spin effects', () => {
+  it('topspin and backspin should produce different cue-ball travel distances', () => {
+    const topspinInput: ShotInput = { angle: 0, power: 2.6, topspin: 0.55, sidespin: 0 };
+    const backspinInput: ShotInput = { angle: 0, power: 2.6, topspin: -0.55, sidespin: 0 };
+
+    const top = createFreshWorld();
+    const topResult = simulateShot(top.world, top.balls, top.pockets, top.pocketed, topspinInput, CANVAS_WIDTH, CANVAS_HEIGHT, RAPIER);
+
+    const back = createFreshWorld();
+    const backResult = simulateShot(back.world, back.balls, back.pockets, back.pocketed, backspinInput, CANVAS_WIDTH, CANVAS_HEIGHT, RAPIER);
+
+    const topCue = topResult.finalSnapshot.balls.find(b => b.number === 0);
+    const backCue = backResult.finalSnapshot.balls.find(b => b.number === 0);
+
+    expect(topCue).toBeTruthy();
+    expect(backCue).toBeTruthy();
+    expect(topCue!.position.x).toBeGreaterThan(backCue!.position.x + 1.5);
+
+    top.world.free();
+    back.world.free();
+  });
+
+  it('left and right side spin should curve cue-ball travel in opposite directions', () => {
+    const rightSpinInput: ShotInput = { angle: 0, power: 2.4, topspin: 0, sidespin: 0.7 };
+    const leftSpinInput: ShotInput = { angle: 0, power: 2.4, topspin: 0, sidespin: -0.7 };
+
+    const right = createFreshWorld();
+    const rightResult = simulateShot(right.world, right.balls, right.pockets, right.pocketed, rightSpinInput, CANVAS_WIDTH, CANVAS_HEIGHT, RAPIER);
+
+    const left = createFreshWorld();
+    const leftResult = simulateShot(left.world, left.balls, left.pockets, left.pocketed, leftSpinInput, CANVAS_WIDTH, CANVAS_HEIGHT, RAPIER);
+
+    const rightCue = rightResult.finalSnapshot.balls.find(b => b.number === 0);
+    const leftCue = leftResult.finalSnapshot.balls.find(b => b.number === 0);
+
+    expect(rightCue).toBeTruthy();
+    expect(leftCue).toBeTruthy();
+    expect(rightCue!.position.z).toBeGreaterThan(leftCue!.position.z + 0.4);
+
+    right.world.free();
+    left.world.free();
+  });
+});
+
 // --- State Serialization Tests ---
 
 describe('State Serialization', () => {

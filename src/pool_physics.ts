@@ -30,6 +30,9 @@ export const PHYSICS_DEFAULTS = {
   ROLLING_FRICTION: 0.015,     // Felt resistance (simulated)
   LINEAR_DAMPING: 0.8,        // Simulates rolling resistance on felt
   ANGULAR_DAMPING: 0.9,       // Simulates rotational friction on felt
+  SPIN_TRANSFER: 5.2,         // How strongly spin transfers into translational motion
+  SIDESPIN_SWERVE: 0.33,      // How much side spin bends the cue ball path
+  SIDESPIN_DECAY: 4.8,        // How quickly side spin is scrubbed by cloth friction
   MAX_SHOT_POWER: 9,          // Maximum shot power (affects impulse strength)
 } as const;
 
@@ -43,6 +46,9 @@ export const CUSHION_FRICTION = PHYSICS_DEFAULTS.CUSHION_FRICTION;
 export const ROLLING_FRICTION = PHYSICS_DEFAULTS.ROLLING_FRICTION;
 export const LINEAR_DAMPING = PHYSICS_DEFAULTS.LINEAR_DAMPING;
 export const ANGULAR_DAMPING = PHYSICS_DEFAULTS.ANGULAR_DAMPING;
+export const SPIN_TRANSFER = PHYSICS_DEFAULTS.SPIN_TRANSFER;
+export const SIDESPIN_SWERVE = PHYSICS_DEFAULTS.SIDESPIN_SWERVE;
+export const SIDESPIN_DECAY = PHYSICS_DEFAULTS.SIDESPIN_DECAY;
 export const MAX_SHOT_POWER = PHYSICS_DEFAULTS.MAX_SHOT_POWER;
 
 // Canvas to physics scale (pixels per physics unit)
@@ -545,15 +551,36 @@ export const applyRollingFriction = (balls: Ball[], dt: number) => {
       // Also apply rolling: angular velocity should match linear velocity
       // For a rolling ball: omega = v / r
       if (speed > 0.05) {
+        const currentAngVel = ball.body.angvel();
+        const dirX = linvel.x / speed;
+        const dirZ = linvel.z / speed;
+
+        // Top/back spin transfer: if contact patch is slipping in shot direction,
+        // cloth friction either drags the ball forward (top spin) or brakes it (back spin).
+        const spinDrivenForwardSpeed = physRadius * (dirX * currentAngVel.z - dirZ * currentAngVel.x);
+        const forwardSlip = spinDrivenForwardSpeed - speed;
+        const forwardTransfer = forwardSlip * physicsConfig.SPIN_TRANSFER * dt;
+
+        // Side spin (english) causes gradual cue-ball swerve due to cloth friction.
+        const swerveScale = Math.min(speed / 3, 1);
+        const lateralTransfer = currentAngVel.y * physRadius * physicsConfig.SIDESPIN_SWERVE * swerveScale * dt;
+        const perpX = -dirZ;
+        const perpZ = dirX;
+
+        ball.body.setLinvel({
+          x: linvel.x + dirX * forwardTransfer + perpX * lateralTransfer,
+          y: linvel.y,
+          z: linvel.z + dirZ * forwardTransfer + perpZ * lateralTransfer
+        }, true);
+
         const targetAngVelX = -linvel.z / physRadius; // Rotation around X from Z motion
         const targetAngVelZ = linvel.x / physRadius;  // Rotation around Z from X motion
-
-        const currentAngVel = ball.body.angvel();
         // Blend toward proper rolling (gradual correction)
         const blend = 0.1;
+        const sideSpinDecay = Math.max(0, 1 - physicsConfig.SIDESPIN_DECAY * dt);
         ball.body.setAngvel({
           x: currentAngVel.x * (1 - blend) + targetAngVelX * blend,
-          y: currentAngVel.y * 0.95, // Damp vertical spin
+          y: currentAngVel.y * sideSpinDecay,
           z: currentAngVel.z * (1 - blend) + targetAngVelZ * blend
         }, true);
       }
