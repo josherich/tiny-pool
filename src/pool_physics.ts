@@ -676,7 +676,9 @@ export const applyCushionSpinToBall = (
   // in canvas space (y ↔ z) is (-normal.y, normal.x).
   const spinSurfaceSpeed = ω.y * physR;
   const grip = physicsConfig.CUSHION_GRIP;
-  const boost = spinSurfaceSpeed * grip;
+  // Negative sign so positive sidespin (right english) runs the ball to the
+  // shooter's right along the cushion, matching the cue-ball control labels.
+  const boost = -spinSurfaceSpeed * grip;
 
   const v = ball.body.linvel();
   ball.body.setLinvel({
