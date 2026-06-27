@@ -298,15 +298,14 @@ describe('Cue ball spin physics', () => {
 
   it('topspin vs backspin produce different cue ball positions after a full-rack break', () => {
     // Use the full 15-ball rack (the realistic scenario players see) and verify
-    // that topspin and backspin yield measurably different cue ball rest
-    // positions. A full-rack break is a noisy scenario (the rack absorbs most
-    // of the energy and the cue ball's post-collision velocity is small), so
-    // we only require that spin demonstrably changes the outcome — the clean
-    // follow/draw behavior is verified in the single-ball tests above.
+    // that topspin and backspin yield visibly different cue ball rest positions
+    // at a realistic 70% power shot. The clean follow/draw behavior is verified
+    // in the single-ball tests above; this test confirms the effect is visible
+    // even in the noisy break scenario.
     const runShot = (topspin: number) => {
       const { world, balls, pockets, pocketed } = createFreshWorld();
       const pThis: PocketedThisShot = { solids: [], stripes: [], cueBall: false };
-      const r = runCueBallShot(world, balls, pockets, pocketed, pThis, 0, 5.0, { topspin, sidespin: 0 }, { maxSeconds: 8 });
+      const r = runCueBallShot(world, balls, pockets, pocketed, pThis, 0, 6.3, { topspin, sidespin: 0 }, { maxSeconds: 8 });
       world.free();
       return r;
     };
@@ -320,8 +319,9 @@ describe('Cue ball spin physics', () => {
     expect(rTop.sawCollision).toBe(true);
     expect(rBack.sawCollision).toBe(true);
 
-    // The three shots should produce at least two distinct final cue ball
-    // positions (rounded to the nearest pixel). Spin must matter.
+    // Spin must visibly affect the outcome — the difference between topspin
+    // and backspin should be more than a couple of pixels.
+    expect(Math.abs(rTop.finalCueX - rBack.finalCueX)).toBeGreaterThan(5);
     const xs = [rNoSpin.finalCueX, rTop.finalCueX, rBack.finalCueX];
     const uniqueCount = new Set(xs.map(x => Math.round(x))).size;
     expect(uniqueCount).toBeGreaterThan(1);
