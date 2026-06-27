@@ -34,7 +34,7 @@ export const PHYSICS_DEFAULTS = {
   TABLE_FRICTION: 12.0,       // Ball-cloth sliding friction (low enough to preserve spin pre-collision, high enough to manifest spin effects post-collision)
   SPIN_SCALE: 3.5,            // Scales cue-spin torque so top/back/side spin produce visible effects
   SIDESPIN_DECAY: 0.4,        // Per-second decay rate for vertical-axis spin (english)
-  CUSHION_GRIP: 0.7,          // Fraction of sidespin transferred to linear velocity at cushion bounce
+  CUSHION_GRIP: 0.2,          // Fraction of sidespin transferred to linear velocity at cushion bounce
 } as const;
 
 export const physicsConfig = { ...PHYSICS_DEFAULTS };
@@ -676,7 +676,9 @@ export const applyCushionSpinToBall = (
   // in canvas space (y ↔ z) is (-normal.y, normal.x).
   const spinSurfaceSpeed = ω.y * physR;
   const grip = physicsConfig.CUSHION_GRIP;
-  const boost = spinSurfaceSpeed * grip;
+  // Negative sign so positive sidespin (right english) runs the ball to the
+  // shooter's right along the cushion, matching the cue-ball control labels.
+  const boost = -spinSurfaceSpeed * grip;
 
   const v = ball.body.linvel();
   ball.body.setLinvel({
