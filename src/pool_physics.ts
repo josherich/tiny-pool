@@ -27,9 +27,10 @@ export const PHYSICS_DEFAULTS = {
   BALL_FRICTION: 0.001,           // No ball-to-ball friction so physics matches guide line prediction
   CUSHION_RESTITUTION: 0.75,  // Cushion bounce factor
   CUSHION_FRICTION: 0.15,     // Cushion surface friction
-  ROLLING_FRICTION: 0.015,     // Felt resistance (simulated)
-  LINEAR_DAMPING: 0.8,        // Simulates rolling resistance on felt
-  ANGULAR_DAMPING: 0.9,       // Simulates rotational friction on felt
+  SLIDING_FRICTION: 0.2,      // Cloth-ball sliding friction (spin effects: draw, follow, curve)
+  ROLLING_FRICTION: 0.015,    // Felt resistance once ball is in pure rolling
+  LINEAR_DAMPING: 0.3,        // Ambient velocity decay (reduced; friction model handles deceleration)
+  ANGULAR_DAMPING: 0.05,      // Ambient rotational decay (reduced; friction model handles spin decay)
   MAX_SHOT_POWER: 9,          // Maximum shot power (affects impulse strength)
 } as const;
 
@@ -40,6 +41,7 @@ export const BALL_RESTITUTION = PHYSICS_DEFAULTS.BALL_RESTITUTION;
 export const BALL_FRICTION = PHYSICS_DEFAULTS.BALL_FRICTION;
 export const CUSHION_RESTITUTION = PHYSICS_DEFAULTS.CUSHION_RESTITUTION;
 export const CUSHION_FRICTION = PHYSICS_DEFAULTS.CUSHION_FRICTION;
+export const SLIDING_FRICTION = PHYSICS_DEFAULTS.SLIDING_FRICTION;
 export const ROLLING_FRICTION = PHYSICS_DEFAULTS.ROLLING_FRICTION;
 export const LINEAR_DAMPING = PHYSICS_DEFAULTS.LINEAR_DAMPING;
 export const ANGULAR_DAMPING = PHYSICS_DEFAULTS.ANGULAR_DAMPING;
@@ -519,54 +521,118 @@ export const computeSubSteps = (balls: Ball[], dt: number): number => {
 };
 
 export const applyRollingFriction = (balls: Ball[], dt: number) => {
-  const frictionCoeff = physicsConfig.ROLLING_FRICTION;
+  const slidingMu = physicsConfig.SLIDING_FRICTION;
+  const rollingMu = physicsConfig.ROLLING_FRICTION;
   const pixelRadius = 12;
-  const physRadius = pixelRadius / SCALE;
+  const R = pixelRadius / SCALE;
+  const mass = physicsConfig.BALL_MASS;
+  // Gravity must be scaled to the game's coordinate system.
+  // Ball radius is 2.4 physics units but 0.028575m in reality,
+  // so 1 physics unit = 0.028575/2.4 = 0.0119m.
+  // g = 9.81 m/s² / 0.0119 m/unit ≈ 824 units/s²
+  const REAL_BALL_RADIUS_M = 0.028575;
+  const metersPerUnit = REAL_BALL_RADIUS_M / R;
+  const g = 9.81 / metersPerUnit;
+  const inertia = (2 / 5) * mass * R * R; // solid sphere moment of inertia
+
+  const STOP_THRESHOLD = 0.05;
+  const SLIP_THRESHOLD = 0.01;
 
   for (const ball of balls) {
     const linvel = ball.body.linvel();
+    const angvel = ball.body.angvel();
     const speed = Math.sqrt(linvel.x * linvel.x + linvel.z * linvel.z);
 
-    if (speed > 0.05) {
-      // Apply friction force opposite to velocity
-      const frictionForce = frictionCoeff * physicsConfig.BALL_MASS * 9.81; // F = mu * m * g
-      const deceleration = frictionForce / physicsConfig.BALL_MASS;
+    // Compute contact-point slip velocity.
+    // Game convention: rolling means ωz = +vx/R, ωx = -vz/R
+    // Slip is zero when in pure rolling: slipX = vx - ωz*R, slipZ = vz + ωx*R
+    const slipX = linvel.x - angvel.z * R;
+    const slipZ = linvel.z + angvel.x * R;
+    const slipSpeed = Math.sqrt(slipX * slipX + slipZ * slipZ);
 
-      // Reduce velocity slightly each step
-      const newSpeed = Math.max(0, speed - deceleration * dt);
-      const factor = speed > 0 ? newSpeed / speed : 0;
-
-      ball.body.setLinvel({
-        x: linvel.x * factor,
-        y: linvel.y,
-        z: linvel.z * factor
-      }, true);
-
-      // Also apply rolling: angular velocity should match linear velocity
-      // For a rolling ball: omega = v / r
-      if (speed > 0.05) {
-        const targetAngVelX = -linvel.z / physRadius; // Rotation around X from Z motion
-        const targetAngVelZ = linvel.x / physRadius;  // Rotation around Z from X motion
-
-        const currentAngVel = ball.body.angvel();
-        // Blend toward proper rolling (gradual correction)
-        const blend = 0.1;
-        ball.body.setAngvel({
-          x: currentAngVel.x * (1 - blend) + targetAngVelX * blend,
-          y: currentAngVel.y * 0.95, // Damp vertical spin
-          z: currentAngVel.z * (1 - blend) + targetAngVelZ * blend
-        }, true);
-      }
-    } else {
-      // Stop very slow balls completely
+    if (speed < STOP_THRESHOLD && slipSpeed < SLIP_THRESHOLD) {
+      // Ball is essentially stopped
       ball.body.setLinvel({ x: 0, y: 0, z: 0 }, true);
       ball.body.setAngvel({ x: 0, y: 0, z: 0 }, true);
+    } else if (slipSpeed > SLIP_THRESHOLD) {
+      // SLIDING PHASE: spin differs from pure rolling — friction opposes slip
+      const frictionMag = slidingMu * mass * g;
+
+      // Cap friction to prevent overshooting the slip in one timestep.
+      // Friction decelerates slip at rate F * 7/(2m) for a solid sphere.
+      const maxFrictionForSlip = slipSpeed * 2 * mass / (7 * dt);
+      const appliedFriction = Math.min(frictionMag, maxFrictionForSlip);
+
+      const slipNormX = slipX / slipSpeed;
+      const slipNormZ = slipZ / slipSpeed;
+
+      // Friction force opposes slip direction
+      const Fx = -appliedFriction * slipNormX;
+      const Fz = -appliedFriction * slipNormZ;
+
+      // Update linear velocity: dv = F/m * dt
+      const dvx = (Fx / mass) * dt;
+      const dvz = (Fz / mass) * dt;
+
+      // Torque from friction, adapted to game convention (ωz = vx/R for rolling).
+      // Signs are flipped vs standard physics cross product so that friction
+      // drives angular velocity toward rolling rather than away from it.
+      const domegaX = (R * Fz / inertia) * dt;
+      const domegaZ = (-R * Fx / inertia) * dt;
+
+      // Sidespin (ωy) creates a lateral force via drilling friction at the
+      // contact patch. This doesn't arise from point-contact slip but is the
+      // primary mechanism for curving the cue ball with english.
+      let sideDvx = 0;
+      let sideDvz = 0;
+      if (speed > STOP_THRESHOLD && Math.abs(angvel.y) > 0.1) {
+        const sidespinForce = slidingMu * 0.3 * mass * g;
+        const sideImpulse = Math.min(sidespinForce * dt, Math.abs(angvel.y) * inertia * 0.1);
+        const sideSign = angvel.y > 0 ? 1 : -1;
+        // Force perpendicular to velocity (rotated 90° clockwise in XZ plane)
+        const dirX = linvel.x / speed;
+        const dirZ = linvel.z / speed;
+        sideDvx = (dirZ * sideImpulse * sideSign) / mass;
+        sideDvz = (-dirX * sideImpulse * sideSign) / mass;
+      }
+
+      ball.body.setLinvel({
+        x: linvel.x + dvx + sideDvx,
+        y: 0,
+        z: linvel.z + dvz + sideDvz
+      }, true);
+
+      ball.body.setAngvel({
+        x: angvel.x + domegaX,
+        y: angvel.y * 0.998, // gentle sidespin damping from cloth drilling friction
+        z: angvel.z + domegaZ
+      }, true);
+    } else {
+      // ROLLING PHASE: ball is in pure rolling, apply rolling resistance
+      if (speed > STOP_THRESHOLD) {
+        const frictionForce = rollingMu * mass * g;
+        const deceleration = frictionForce / mass;
+        const newSpeed = Math.max(0, speed - deceleration * dt);
+        const factor = newSpeed / speed;
+
+        const newLinX = linvel.x * factor;
+        const newLinZ = linvel.z * factor;
+
+        ball.body.setLinvel({ x: newLinX, y: 0, z: newLinZ }, true);
+
+        // Keep angular velocity consistent with rolling (game convention)
+        ball.body.setAngvel({
+          x: -newLinZ / R,
+          y: angvel.y * 0.998,
+          z: newLinX / R
+        }, true);
+      }
     }
 
-    // Keep balls on the table (Y should be at ball radius)
+    // Keep balls on the table surface (Y = ball radius)
     const pos = ball.body.translation();
-    if (Math.abs(pos.y - physRadius) > 0.01) {
-      ball.body.setTranslation({ x: pos.x, y: physRadius, z: pos.z }, true);
+    if (Math.abs(pos.y - R) > 0.01) {
+      ball.body.setTranslation({ x: pos.x, y: R, z: pos.z }, true);
       const linv = ball.body.linvel();
       ball.body.setLinvel({ x: linv.x, y: 0, z: linv.z }, true);
     }

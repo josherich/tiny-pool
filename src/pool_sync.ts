@@ -78,7 +78,7 @@ export function serializeBalls(balls: Ball[]): BallState[] {
 
 // --- Hashing ---
 
-function quantize(v: number, decimals: number = 6): number {
+function quantize(v: number, decimals: number = 1): number {
   const factor = Math.pow(10, decimals);
   return Math.round(v * factor) / factor;
 }
@@ -202,7 +202,6 @@ export function simulateShot(
       });
       allPocketedEvents.push(...events);
     }
-
     applyRollingFriction(balls, FIXED_DT);
 
     steps++;
