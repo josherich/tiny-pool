@@ -294,6 +294,10 @@ describe('Cue ball spin physics', () => {
     expect(rRight.finalCueZ).not.toBeCloseTo(r0.finalCueZ, 1);
     // The two spin directions should push the ball in opposite z directions.
     expect(Math.sign(rLeft.finalCueZ - r0.finalCueZ)).not.toEqual(Math.sign(rRight.finalCueZ - r0.finalCueZ));
+    // Positive sidespin (right english on the control) should run the ball
+    // toward +z along the right cushion after the bounce.
+    expect(rRight.finalCueZ).toBeGreaterThan(r0.finalCueZ);
+    expect(rLeft.finalCueZ).toBeLessThan(r0.finalCueZ);
   });
 
   it('topspin vs backspin produce different cue ball positions after a full-rack break', () => {
